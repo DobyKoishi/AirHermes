@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Hermes-iMessage-Photon-Deluxe - Automated Installer & Patch Manager.
+"""AirHermes - Automated Installer & Patch Manager.
 
 Injects discrete multi-bubble streaming and native iOS ecosystem parity into Hermes Agent.
 """
@@ -54,7 +54,7 @@ def apply_patch(target_dir: Path, patch_file: Path) -> bool:
 
 
 def install(target_dir: Path) -> bool:
-    print(f"[*] Installing Hermes-iMessage-Photon-Deluxe into: {target_dir}")
+    print(f"[*] Installing AirHermes into: {target_dir}")
     if not (target_dir / "gateway" / "run_turn.py").exists():
         print(f"[!] Error: {target_dir} does not appear to be a valid hermes-agent root.")
         return False
@@ -111,7 +111,7 @@ def install(target_dir: Path) -> bool:
         print("[*] Applying spectrum-ts poll patch...")
         subprocess.run(["node", "patch-spectrum-poll.mjs"], cwd=sidecar_dir)
 
-    print("\n[+] Hermes-iMessage-Photon-Deluxe installed successfully!")
+    print("\n[+] AirHermes installed successfully!")
     print("[*] Note: If you haven't linked iMessage yet, run 'hermes photon setup'.")
     print("[*] Launch your bot anytime with: hermes gateway")
     return all_patched
@@ -127,7 +127,7 @@ def verify(target_dir: Path) -> bool:
 
 
 def uninstall(target_dir: Path) -> bool:
-    print(f"[*] Uninstalling Hermes-iMessage-Photon-Deluxe from: {target_dir}")
+    print(f"[*] Uninstalling AirHermes from: {target_dir}")
     backup_dir = target_dir / ".deluxe_backup"
     if not backup_dir.exists():
         print(f"[!] No backup directory found at {backup_dir}. Cannot auto-restore.")
@@ -162,7 +162,7 @@ def uninstall(target_dir: Path) -> bool:
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Hermes-iMessage-Photon-Deluxe Installer")
+    parser = argparse.ArgumentParser(description="AirHermes Installer")
     parser.add_argument("--target", "-t", type=Path, default=None, help="Path to hermes-agent root directory")
     parser.add_argument("--verify", action="store_true", help="Run tests to verify installation")
     parser.add_argument("--uninstall", action="store_true", help="Uninstall Deluxe and restore backups")

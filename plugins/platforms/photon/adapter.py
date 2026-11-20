@@ -64,7 +64,9 @@ _MAX_MESSAGE_LENGTH = 8000  # iMessage caps practical size at ~16 KB; conservati
 # token; persisted once /healthz passes, removed on every stop / failed-start path.
 # --------------------------------------------------------------------------- Sidecar runtime record The
 # gateway persists this record once the sidecar passes its /healthz readiness check, and removes it on every
-# stop / failed-start path so a stale record never outlives a dead sidecar. See #69960.
+# stop / failed-start path so a stale record never outlives a dead sidecar. See #69960. It sits at the top of
+# the profile home, where a sandbox can hide it by path (a folder the agent writes, like runtime/, can be
+# renamed to expose a hidden file below it).
 _RUNTIME_RECORD_NAME = "photon-sidecar.json"
 _DEDUP_MAX_SIZE = 4000  # the gRPC stream is at-least-once and a reconnect can replay
 _DEDUP_WINDOW_SECONDS = 48 * 3600
@@ -103,28 +105,43 @@ async def _aiter_ndjson_lines(response: Any) -> AsyncIterator[str]:
 
 def _runtime_record_path() -> Path:
     from hermes_constants import get_hermes_home  # honors profile overrides
-    return get_hermes_home() / "runtime" / _RUNTIME_RECORD_NAME
+    return get_hermes_home() / _RUNTIME_RECORD_NAME
+
+
+def _legacy_runtime_record_path() -> Path:
+    """Where earlier releases kept the record: ``<hermes-home>/runtime/``."""
+    path = _runtime_record_path()
+    return path.parent / "runtime" / path.name
+
+
+def _current_runtime_record_path() -> Path:
+    """The record path. A record at the legacy path is deleted first without being read: the agent
+    can write that folder."""
+    with contextlib.suppress(OSError):
+        _legacy_runtime_record_path().unlink()
+    return _runtime_record_path()
 
 
 def _write_runtime_record(port: int, token: str, pid: int) -> None:
     """Atomically persist ``{port, token, pid}`` 0600 from creation (best-effort)."""
     try:
-        atomic_json_write(_runtime_record_path(), {"port": port, "token": token, "pid": pid}, indent=None, mode=0o600)
+        atomic_json_write(_current_runtime_record_path(), {"port": port, "token": token, "pid": pid}, indent=None, mode=0o600)
     except Exception as e:
         logger.warning("[photon] failed to write sidecar runtime record: %s", e)
 
 
 def _read_runtime_record() -> Optional[dict[str, Any]]:
     try:
-        raw = json.loads(_runtime_record_path().read_text(encoding="utf-8-sig"))
+        raw = json.loads(_current_runtime_record_path().read_text(encoding="utf-8-sig"))
     except (OSError, ValueError):
         return None
     return raw if isinstance(raw, dict) else None
 
 
 def _delete_runtime_record() -> None:
-    with contextlib.suppress(OSError):
-        _runtime_record_path().unlink(missing_ok=True)
+    for path in (_runtime_record_path(), _legacy_runtime_record_path()):
+        with contextlib.suppress(OSError):
+            path.unlink(missing_ok=True)
 
 
 def _sidecar_pid_alive(pid: Any) -> bool:
@@ -359,7 +376,9 @@ def _normalize_cjk_markdown(text: str) -> str:
     """
     if not text:
         return ""
+    # Space before * / ** / *** when preceded by a word/CJK character and followed by opening punctuation
     text = re.sub(rf'(\w)(?<!\*)(\*{{1,3}})(?!\*)({_OPEN_PUNCT})', r'\1 \2\3', text)
+    # Space after * / ** / *** when preceded by closing punctuation and followed by a word/CJK character
     text = re.sub(rf'({_CLOSE_PUNCT})(?<!\*)(\*{{1,3}})(?!\*)(\w)', r'\1\2 \3', text)
     return text
 
@@ -567,6 +586,11 @@ def _attachment_body(space_id: str, safe_path: str, *, kind: str, name: Optional
 
 
 def _guess_mime(path: str) -> Optional[str]:
+    p = (path or "").lower()
+    if p.endswith(".loc.vcf") or p.endswith(".vcf"):
+        return "text/vcard"
+    if p.endswith(".ics"):
+        return "text/calendar"
     import mimetypes
     return mimetypes.guess_type(path)[0] or None
 
@@ -1074,6 +1098,7 @@ class PhotonAdapter(BasePlatformAdapter):
             self._sidecar_proc = subprocess.Popen(  # noqa: ASYNC220 -- persistent sidecar; callers use the Popen pipes and poll()
                 [self._node_bin, str(_sidecar_dir() / "index.mjs")],
                 stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, env=env,
+                # detached-spawn: ok — exits on stdin EOF (PHOTON_SIDECAR_WATCH_STDIN), so it dies with this process
                 start_new_session=(sys.platform != "win32"),
                 # Windows: run the persistent sidecar headless so it does not open
                 # (or leave) a visible console window. CREATE_NO_WINDOW only (no
@@ -1282,8 +1307,11 @@ class PhotonAdapter(BasePlatformAdapter):
             return SendResult(success=True)
 
         _PARSE_TRIGGERS = (
-            "<bubble>", "<<<bubble>>>",
-            "<image", "<img", "<photo", "<media",
+            "<bubble>", "<<<bubble>>>", "<weather", "<forecast",
+            "<cheat_sheet", "<visual_table", "<sheet",
+            "<movie", "<film", "<tv", "<drama",
+            "<word", "<dict", "<dictionary", "<lexicon",
+            "<image", "<img", "<photo", "<media", "<meme",
             "<tapback", "<reaction", "<poll", "<effect",
             "<calendar", "<map", "<contact", "<action",
             "MEDIA:", "IMAGE:", "FILE:",
@@ -1303,6 +1331,7 @@ class PhotonAdapter(BasePlatformAdapter):
                             caption = data.get("caption") or ""
                             delay = float(data.get("delay", 1.5))
                             if hasattr(self, "send_image_file") and os.path.exists(img_path):
+                                logger.info("[photon] Delivering card/image %s to %s", img_path, chat_id)
                                 last_res = await self.send_image_file(chat_id, img_path, caption=caption)
                                 if not last_res.success:
                                     return last_res
@@ -1317,47 +1346,56 @@ class PhotonAdapter(BasePlatformAdapter):
                                     await asyncio.sleep(delay)
                                 continue
                         except Exception as e:
-                            logger.warning("[photon] failed to parse IMAGE bubble payload: %s", e)
-                            continue
-                    elif b.startswith("FILE:"):
-                        fpath = b[len("FILE:"):].strip()
-                        if os.path.exists(fpath):
-                            last_res = await self.send_file(chat_id, fpath)
-                            if not last_res.success:
-                                return last_res
-                            await asyncio.sleep(0.500)
-                            continue
-                    elif b.startswith("EFFECT:"):
-                        try:
-                            data = json.loads(b[len("EFFECT:"):])
-                            eff = data.get("effect", "")
-                            text = data.get("text", "")
-                            last_res = await self._sidecar_send_effect(chat_id, text, eff)
+                            logger.warning("[photon] failed to dispatch IMAGE bubble: %s", e)
+
+                    if b.startswith("FILE:"):
+                        file_path = b[len("FILE:"):].strip()
+                        if hasattr(self, "send_document") and os.path.exists(file_path):
+                            logger.info("[photon] Delivering document %s to %s", file_path, chat_id)
+                            try:
+                                file_name = os.path.basename(file_path)
+                                last_res = await self.send_document(chat_id, file_path, file_name=file_name)
+                            except TypeError:
+                                last_res = await self.send_document(chat_id, file_path)
                             if not last_res.success:
                                 return last_res
                             await asyncio.sleep(0.400)
                             continue
-                        except Exception as e:
-                            logger.warning("[photon] failed to parse EFFECT bubble payload: %s", e)
-                            continue
-                    elif b.startswith("POLL:"):
+
+                    if b.startswith("POLL:"):
                         try:
                             data = json.loads(b[len("POLL:"):])
-                            title = data.get("title", "Poll")
-                            opts = data.get("options", [])
-                            last_res = await self._sidecar_send_poll(chat_id, title, opts)
-                            if not last_res.success:
-                                return last_res
-                            await asyncio.sleep(0.400)
-                            continue
+                            title = data.get("title") or "请选择"
+                            options = data.get("options") or []
+                            if hasattr(self, "_sidecar_send_poll"):
+                                last_res = await self._sidecar_send_poll(chat_id, title, options)
+                                if not last_res.success:
+                                    return last_res
+                                await asyncio.sleep(0.400)
+                                continue
                         except Exception as e:
-                            logger.warning("[photon] failed to parse POLL bubble payload: %s", e)
-                            continue
+                            logger.warning("[photon] failed to dispatch POLL bubble: %s", e)
+
+                    if b.startswith("EFFECT:"):
+                        try:
+                            data = json.loads(b[len("EFFECT:"):])
+                            eff = data.get("effect") or "confetti"
+                            eff_text = data.get("text") or ""
+                            if hasattr(self, "_sidecar_send_effect"):
+                                last_res = await self._sidecar_send_effect(chat_id, eff_text, eff)
+                                if not last_res.success:
+                                    return last_res
+                                await asyncio.sleep(0.400)
+                                continue
+                        except Exception as e:
+                            logger.warning("[photon] failed to dispatch EFFECT bubble: %s", e)
+
                     last_res = await self._sidecar_send(chat_id, b)
                     if not last_res.success:
                         return last_res
                     await asyncio.sleep(0.400)
                 return last_res
+            return SendResult(success=True)
         return await self._sidecar_send(chat_id, formatted)
 
     async def send_clarify(self, chat_id: str, question: str, choices: Optional[list], clarify_id: str,
@@ -1506,8 +1544,6 @@ class PhotonAdapter(BasePlatformAdapter):
     async def remove_reaction(self, chat_id: str, message_id: Optional[str] = None) -> dict[str, Any]:
         """Retract our tapback from a message (best-effort)."""
         target = message_id or self._last_inbound_by_chat.get(self._normalize_chat_key(chat_id))
-        if target and ":reaction:" in target:
-            target = target.split(":reaction:")[0]
         if not target:
             return {"success": False, "error": "no message to unreact — pass message_id"}
         if not await self._remove_reaction(chat_id, target):
@@ -1533,7 +1569,7 @@ class PhotonAdapter(BasePlatformAdapter):
         return {"name": chat_id, "type": "dm", "id": chat_id}
 
     def format_message(self, content: str) -> str:
-        # Strip control tags so they never leak as literal text
+        # Strip tapback / poll / effect / calendar / map / spoiler control tags so they never leak as literal text
         content = re.sub(
             r'<(?:tapback|reaction|poll|effect|calendar|map|location|spoiler)(?:\s+[^>]*?)?>.*?</(?:tapback|reaction|poll|effect|calendar|map|location|spoiler)>|<(?:tapback|reaction|poll|effect|calendar|map|location|spoiler)\s+[^>]*?/>',
             '', content, flags=re.IGNORECASE | re.DOTALL,
@@ -1762,7 +1798,7 @@ def _standalone_token_from_record(port: int) -> tuple[Optional[str], int, str]:
                       " — the gateway appears to be down.")
     return None, port, (
         "Photon standalone send requires a running sidecar. Start the Hermes gateway (which spawns "
-        f"the sidecar and records its address under <hermes-home>/runtime/{_RUNTIME_RECORD_NAME}), "
+        f"the sidecar and records its address in <hermes-home>/{_RUNTIME_RECORD_NAME}), "
         "or set PHOTON_SIDECAR_TOKEN in this process's environment." + stale_hint)
 
 

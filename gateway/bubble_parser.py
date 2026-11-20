@@ -124,6 +124,21 @@ class BubbleParser:
         r'<(?:cheat_sheet|visual_table|sheet)(?:\s+(?P<attrs>[^>]*?))?\s*>(?P<body>.*?)</(?:cheat_sheet|visual_table|sheet)>',
         re.IGNORECASE | re.DOTALL,
     )
+    _WEATHER_RE = re.compile(
+        r'<(?:weather|forecast)(?:\s+(?P<attrs>[^>]*?))?\s*>(?P<body>.*?)</(?:weather|forecast)>|'
+        r'<(?:weather|forecast)(?:\s+(?P<self_attrs>(?:[^"\'/>]|"[^"]*"|\'[^\']*\')*?))?\s*/>',
+        re.IGNORECASE | re.DOTALL,
+    )
+    _MOVIE_RE = re.compile(
+        r'<(?:movie|film|tv|drama)(?:\s+(?P<attrs>[^>]*?))?\s*>(?P<body>.*?)</(?:movie|film|tv|drama)>|'
+        r'<(?:movie|film|tv|drama)(?:\s+(?P<self_attrs>(?:[^"\'/>]|"[^"]*"|\'[^\']*\')*?))?\s*/>',
+        re.IGNORECASE | re.DOTALL,
+    )
+    _WORD_RE = re.compile(
+        r'<(?:word|dict|dictionary|lexicon)(?:\s+(?P<attrs>[^>]*?))?\s*>(?P<body>.*?)</(?:word|dict|dictionary|lexicon)>|'
+        r'<(?:word|dict|dictionary|lexicon)(?:\s+(?P<self_attrs>(?:[^"\'/>]|"[^"]*"|\'[^\']*\')*?))?\s*/>',
+        re.IGNORECASE | re.DOTALL,
+    )
     _ACTION_RE = re.compile(
         r'<(?:action|shortcut|deeplink)(?:\s+(?P<attrs>[^>]*?))?\s*>(?P<body>.*?)</(?:action|shortcut|deeplink)>|'
         r'<(?:action|shortcut|deeplink)(?:\s+(?P<self_attrs>(?:[^"\'/>]|"[^"]*"|\'[^\']*\')*?))?\s*/>',
@@ -161,6 +176,11 @@ class BubbleParser:
         self._pending_effect: Optional[str] = None
         self._has_emitted_map: bool = False
         self._has_emitted_poll: bool = False
+        self._cheat_sheet_options: List[str] = []
+        self._cheat_sheet_title: str = ""
+        self._has_emitted_weather: bool = False
+        self._has_emitted_movie: bool = False
+        self._has_emitted_word: bool = False
         self.paragraph_fallback: bool = paragraph_fallback
         self.isolate_urls: bool = isolate_urls
 
@@ -230,12 +250,84 @@ class BubbleParser:
                 else:
                     ready.extend(self._emit_bubble(rem))
 
+        # Auto-poll guardrail disabled: polls should be organic and contextual,
+        # never forcefully injected on every comparison cheat sheet.
+        # if not self._has_emitted_poll and self._cheat_sheet_options and not exception_occurred:
+        #     ...
+
         # Reset cross-turn parser state
         self._in_code_block = False
         self._active_code_lang = ""
         self._pending_effect = None
         self._has_emitted_poll = False
+        self._cheat_sheet_options = []
+        self._cheat_sheet_title = ""
+        self._has_emitted_weather = False
+        self._has_emitted_movie = False
+        self._has_emitted_word = False
         return ready
+
+    @staticmethod
+    def _is_weather_content(title: str = "", body: str = "") -> bool:
+        """Detect whether a cheat sheet or table is duplicate weather telemetry."""
+        title_lower = (title or "").lower()
+        if any(k in title_lower for k in ("天气", "气象", "今日天气", "天气概览", "天气预报", "实时天气", "气温")):
+            return True
+        combined = f"{title} {body}".lower()
+        weather_keywords = (
+            "天气", "气温", "预报", "体感", "气象", "降水", "风向",
+            "湿度", "紫外线", "aqi", "穿搭建议", "穿衣建议", "小雨",
+            "微雨", "大雨", "暴雨", "晴天", "阴天", "多云", "毛毛雨"
+        )
+        hits = sum(1 for kw in weather_keywords if kw in combined)
+        return hits >= 3
+
+    _SEQ_TIME_PATTERN = re.compile(
+        r'(?:第[一二三四五六七八九十\d]+[站步期天节次]|上午|下午|晚上|早晨|中午|凌晨|Day\s*\d|\d{1,2}:\d{2})',
+        re.IGNORECASE,
+    )
+
+    @classmethod
+    def _extract_options_from_table(cls, body: str, title: str = "") -> List[str]:
+        lines = [line.strip() for line in body.strip().splitlines() if line.strip()]
+        data_lines = []
+        for l in lines:
+            if not l.startswith('|'):
+                continue
+            cells = [c.strip() for c in l.split('|')[1:-1]]
+            if not cells:
+                continue
+            # Skip header separators like :--- or ---
+            if all(re.match(r'^:?-+:?$', c) for c in cells):
+                continue
+            data_lines.append(cells)
+        if len(data_lines) <= 1:
+            return []
+        rows = data_lines[1:]
+        options = []
+        for r in rows:
+            if not r:
+                continue
+            col0 = r[0]
+            # Strip markdown formatting
+            cleaned = re.sub(r'[*_`]', '', col0).strip()
+            # If any row is a sequential step/time (e.g. 第一站, 14:30), this is an itinerary schedule, NOT a choice!
+            if cls._SEQ_TIME_PATTERN.search(cleaned):
+                return []
+            if len(cleaned) > 28:
+                cleaned = cleaned[:27] + '…'
+            if cleaned:
+                options.append(cleaned)
+
+        # Must have clear alternative signals (e.g. 路线, 方案, 方向, [A-D]线, or title has 对比/推荐)
+        has_choice_signal = (
+            any(re.search(r'(?:路线|方案|方向|[A-D]：|[A-D]线|[A-D]方案)', opt) for opt in options)
+            or bool(re.search(r'(?:对比|可选|方向|精选推荐)', title))
+        )
+        if not has_choice_signal:
+            return []
+
+        return options
 
     def _find_matching_bubble_close(self, buffer: str, open_pos: int) -> int:
         """Find the matching </bubble> for <bubble> at open_pos, respecting tag nesting."""
@@ -304,7 +396,7 @@ class BubbleParser:
         cleaned = re.sub(r'</?(?:contact|vcard|card)[^>]*$', '', cleaned, flags=re.IGNORECASE)
         cleaned = re.sub(r'</?(?:image|img|photo|media|meme)[^>]*$', '', cleaned, flags=re.IGNORECASE)
         cleaned = re.sub(r'(?:^|[\r\n\s>])(?:[`*_]{0,3})(?:MEDIA|IMAGE|FILE):[ \t]*[`"\'*_]{0,3}$', '', cleaned, flags=re.IGNORECASE)
-        cleaned = re.sub(r'</?(?:cheat_sheet|visual_table|sheet)[^>]*$', '', cleaned, flags=re.IGNORECASE)
+        cleaned = re.sub(r'</?(?:cheat_sheet|visual_table|sheet|weather|forecast|movie|film|tv|drama|word|dict|dictionary|lexicon)[^>]*$', '', cleaned, flags=re.IGNORECASE)
         cleaned = re.sub(r'</?(?:action|shortcut|deeplink)[^>]*$', '', cleaned, flags=re.IGNORECASE)
         return cleaned.strip()
 
@@ -331,15 +423,21 @@ class BubbleParser:
             from urllib.parse import unquote
             p = unquote(p[7:].strip())
 
+        meme_dir = r"D:\Hermes Works\Fun_Memes"
+        cache_dir = r"D:\Hermes Works\cache"
         if not os.path.isabs(p) and not p.startswith(('http://', 'https://')):
-            try:
-                from hermes_constants import get_hermes_home
-                cache_dir = get_hermes_home() / "cache"
-                cand_cache = cache_dir / p
-                if cand_cache.is_file():
-                    p = str(cand_cache)
-            except Exception:
-                pass
+            cand_meme = os.path.join(meme_dir, p)
+            cand_cache = os.path.join(cache_dir, p)
+            if os.path.exists(cand_meme):
+                p = cand_meme
+            elif os.path.exists(cand_meme + ".gif"):
+                p = cand_meme + ".gif"
+            elif os.path.exists(cand_meme + ".png"):
+                p = cand_meme + ".png"
+            elif os.path.exists(cand_cache):
+                p = cand_cache
+            elif os.path.exists(cand_cache + ".png"):
+                p = cand_cache + ".png"
 
         if not p.startswith(('http://', 'https://')):
             p = os.path.normpath(p)
@@ -369,22 +467,22 @@ class BubbleParser:
             "BEGIN:VCARD",
             "VERSION:3.0",
             "PRODID:-//Hermes Agent//iMessage Contact Card//CN",
-            f"FN:{clean_name}",
-            f"N:;{clean_name};;;",
+            f"FN;CHARSET=UTF-8:{clean_name}",
+            f"N;CHARSET=UTF-8:;{clean_name};;;",
         ]
         if org:
-            lines.append(f"ORG:{org.strip()}")
+            lines.append(f"ORG;CHARSET=UTF-8:{org.strip()}")
         if title:
-            lines.append(f"TITLE:{title.strip()}")
+            lines.append(f"TITLE;CHARSET=UTF-8:{title.strip()}")
         if phone:
             clean_phone = re.sub(r"[^\d\+\-\s]", "", phone.strip())
             lines.append(f"TEL;TYPE=CELL,VOICE:{clean_phone}")
         if email:
             lines.append(f"EMAIL;TYPE=INTERNET,WORK:{email.strip()}")
         if address:
-            lines.append(f"ADR;TYPE=WORK:;;{address.strip()};;;;")
+            lines.append(f"ADR;TYPE=WORK;CHARSET=UTF-8:;;{address.strip()};;;;")
         if note:
-            lines.append(f"NOTE:{note.strip()}")
+            lines.append(f"NOTE;CHARSET=UTF-8:{note.strip()}")
         lines.append("END:VCARD")
         lines.append("")
 
@@ -393,16 +491,64 @@ class BubbleParser:
         safe_name = re.sub(r'[\\/:*?"<>|\r\n\t]+', '', clean_name).strip()
         safe_name = re.sub(r'\s+', ' ', safe_name)
         safe_name = safe_name[:40].strip(' ._') or "联系人"
-        try:
-            from hermes_constants import get_hermes_home
-            scratch_dir = str(get_hermes_home() / "cache" / "contacts")
-        except Exception:
-            scratch_dir = os.path.expanduser("~/.hermes/cache/contacts")
+        scratch_dir = os.path.expanduser(r"~\AppData\Local\hermes\cache\contacts")
         target_dir = os.path.join(scratch_dir, h)
         try:
             os.makedirs(target_dir, exist_ok=True)
             file_path = os.path.join(target_dir, f"{safe_name}.vcf")
-            with open(file_path, "w", encoding="utf-8") as fp:
+            with open(file_path, "w", encoding="utf-8-sig") as fp:
+                fp.write(vcf_content)
+            return file_path
+        except Exception:
+            return None
+
+    @staticmethod
+    def _generate_location_vcf(
+        title: str,
+        query: str = "",
+        address: str = "",
+        ll: str = "",
+    ) -> Optional[str]:
+        clean_title = (title or query or "地图定位").strip()
+        if query.startswith("http://") or query.startswith("https://") or query.startswith("maps://"):
+            maps_url = query
+        else:
+            encoded_query = quote_plus(query or clean_title, safe=",+")
+            maps_url = f"https://maps.apple.com/?q={encoded_query}"
+            if address:
+                maps_url += f"&address={quote_plus(address, safe=',+')}"
+            if ll:
+                maps_url += f"&ll={ll}"
+
+        lines = [
+            "BEGIN:VCARD",
+            "VERSION:3.0",
+            "PRODID:-//Apple Inc.//macOS 14.5//EN",
+            f"N;CHARSET=UTF-8:;{clean_title};;;",
+            f"FN;CHARSET=UTF-8:{clean_title}",
+            f"item1.URL;type=pref:{maps_url}",
+            "item1.X-ABLabel:map url",
+        ]
+        if ll and "," in ll:
+            lines.append(f"geo:{ll.strip()}")
+        if address:
+            clean_addr = address.strip().replace(";", " ")
+            lines.append(f"item2.ADR;type=pref;CHARSET=UTF-8:;;{clean_addr};;;;")
+            lines.append("item2.X-ABLabel:")
+        lines.append("END:VCARD")
+        lines.append("")
+
+        vcf_content = "\r\n".join(lines)
+        h = hashlib.sha256(vcf_content.encode("utf-8")).hexdigest()[:8]
+        safe_name = re.sub(r'[\\/:*?"<>|\r\n\t]+', '', clean_title).strip()
+        safe_name = re.sub(r'\s+', ' ', safe_name)
+        safe_name = safe_name[:40].strip(' ._') or "地图定位"
+        scratch_dir = os.path.expanduser(r"~\AppData\Local\hermes\cache\scratch\locations")
+        target_dir = os.path.join(scratch_dir, h)
+        try:
+            os.makedirs(target_dir, exist_ok=True)
+            file_path = os.path.join(target_dir, f"{safe_name}.loc.vcf")
+            with open(file_path, "w", encoding="utf-8-sig") as fp:
                 fp.write(vcf_content)
             return file_path
         except Exception:
@@ -467,19 +613,19 @@ class BubbleParser:
             f"DTSTAMP:{now_ics}\r\n"
             f"DTSTART:{start_ics}\r\n"
             f"DTEND:{end_ics}\r\n"
-            f"SUMMARY:{escape_ics(clean_title)}\r\n"
+            f"SUMMARY;CHARSET=UTF-8:{escape_ics(clean_title)}\r\n"
         )
         if description:
-            ics_content += f"DESCRIPTION:{escape_ics(description.strip())}\r\n"
+            ics_content += f"DESCRIPTION;CHARSET=UTF-8:{escape_ics(description.strip())}\r\n"
         if location:
-            ics_content += f"LOCATION:{escape_ics(location.strip())}\r\n"
+            ics_content += f"LOCATION;CHARSET=UTF-8:{escape_ics(location.strip())}\r\n"
 
         ics_content += (
             "STATUS:CONFIRMED\r\n"
             "BEGIN:VALARM\r\n"
             "TRIGGER:-PT15M\r\n"
             "ACTION:DISPLAY\r\n"
-            f"DESCRIPTION:提醒: {escape_ics(clean_title)}\r\n"
+            f"DESCRIPTION;CHARSET=UTF-8:提醒: {escape_ics(clean_title)}\r\n"
             "END:VALARM\r\n"
             "END:VEVENT\r\n"
             "END:VCALENDAR\r\n"
@@ -489,16 +635,12 @@ class BubbleParser:
         safe_name = re.sub(r'[\\/:*?"<>|\r\n\t]+', '', clean_title).strip()
         safe_name = re.sub(r'\s+', ' ', safe_name)
         safe_name = safe_name[:40].strip(' ._') or "日程"
-        try:
-            from hermes_constants import get_hermes_home
-            scratch_dir = str(get_hermes_home() / "cache" / "scratch" / "events")
-        except Exception:
-            scratch_dir = os.path.expanduser("~/.hermes/cache/scratch/events")
+        scratch_dir = os.path.expanduser(r"~\AppData\Local\hermes\cache\scratch\events")
         target_dir = os.path.join(scratch_dir, h)
         try:
             os.makedirs(target_dir, exist_ok=True)
             file_path = os.path.join(target_dir, f"{safe_name}.ics")
-            with open(file_path, "w", encoding="utf-8") as fp:
+            with open(file_path, "w", encoding="utf-8-sig") as fp:
                 fp.write(ics_content)
             return file_path
         except Exception:
@@ -750,7 +892,11 @@ class BubbleParser:
 
             if body:
                 results.append(body)
-            results.append(maps_url)
+            loc_vcf = self._generate_location_vcf(title=title, query=query, address=address, ll=ll)
+            if loc_vcf:
+                results.append(f"FILE:{loc_vcf}")
+            else:
+                results.append(maps_url)
             self._has_emitted_map = True
             last_idx = end
             trailing_match = re.match(r'^\s*(?:https?://(?:maps\.apple\.com|maps\.google\.com)[^\s<>"\'\)]*|maps://[^\s<>"\'\)]*)', text[last_idx:])
@@ -794,23 +940,224 @@ class BubbleParser:
             results.append(post)
         return results or [text]
 
+    def _extract_raw_markdown_table(self, text: str) -> Optional[Tuple[str, str, str]]:
+        """If text contains a markdown table (>=3 lines with pipes), return (pre, table_block, post)."""
+        lines = text.splitlines(keepends=True)
+        start_idx = None
+        end_idx = None
+        consecutive_pipes = 0
+
+        for i, line in enumerate(lines):
+            stripped = line.strip()
+            if "|" in stripped and len([c for c in stripped.split("|") if c.strip()]) >= 2:
+                if start_idx is None:
+                    start_idx = i
+                consecutive_pipes += 1
+                end_idx = i + 1
+            else:
+                if consecutive_pipes >= 3:
+                    break
+                elif consecutive_pipes > 0:
+                    start_idx = None
+                    consecutive_pipes = 0
+                    end_idx = None
+
+        if consecutive_pipes >= 3 and start_idx is not None and end_idx is not None:
+            pre = "".join(lines[:start_idx]).strip()
+            table = "".join(lines[start_idx:end_idx]).strip()
+            post = "".join(lines[end_idx:]).strip()
+            return pre, table, post
+        return None
+
     def _process_embedded_cheat_sheets(self, text: str) -> List[str]:
         if "```" in text or self._is_inside_code_block(text):
             return [text]
 
-        if not self._CHEAT_SHEET_RE.search(text):
+        has_weather_in_text = bool(self._WEATHER_RE.search(text))
+
+        if self._CHEAT_SHEET_RE.search(text):
+            results: List[str] = []
+            last_idx = 0
+            for m in self._CHEAT_SHEET_RE.finditer(text):
+                start, end = m.span()
+                pre = text[last_idx:start].strip()
+                if pre:
+                    results.append(pre)
+                attrs_str = m.group("attrs") or ""
+                attrs = self._parse_tag_attrs(attrs_str)
+                title = attrs.get("title") or "速查清单"
+                subtitle = attrs.get("subtitle") or ""
+                body = (m.group("body") or "").strip()
+
+                # Deduplication: suppress weather cheat sheet if weather card is present or already emitted
+                if (has_weather_in_text or self._has_emitted_weather) and self._is_weather_content(title, body):
+                    last_idx = end
+                    continue
+
+                png_path = None
+                try:
+                    from gateway.visual_sheet_renderer import render_markdown_table_to_image
+                    png_path = render_markdown_table_to_image(body, title=title, subtitle=subtitle)
+                except Exception as render_err:
+                    pass
+
+                if png_path and os.path.isfile(png_path) and os.path.getsize(png_path) > 500:
+                    payload = json.dumps({"path": png_path, "caption": "", "delay": 1.5}, ensure_ascii=False)
+                    results.append(f"IMAGE:{payload}")
+                else:
+                    if body:
+                        results.append(body)
+                last_idx = end
+            post = text[last_idx:].strip()
+            if post:
+                results.append(post)
+            return results or [text]
+
+        # Auto-detect raw markdown table (>=3 lines with pipes) only when structured comparison/table intent exists
+        table_match = self._extract_raw_markdown_table(text)
+        if table_match:
+            pre, table_block, post = table_match
+            if (has_weather_in_text or self._has_emitted_weather) and self._is_weather_content(pre, table_block):
+                return [p for p in (pre, post) if p] or [text]
+
+            # Prevent turning casual lists into unwanted cheat sheets: require explicit comparison/spec intent
+            has_table_intent = any(k in text for k in ("对比", "参数", "规格", "配置", "清单", "时间表", "行程表", "价格表"))
+            if has_table_intent:
+                title = "核心数据速查对比卡"
+                if pre:
+                    for line in reversed(pre.splitlines()):
+                        cleaned = line.strip().rstrip("：:👇 \t")
+                        if cleaned and len(cleaned) < 30 and any(k in cleaned for k in ("对比", "参数", "清单", "表")):
+                            title = cleaned
+                            break
+
+                png_path = None
+                try:
+                    from gateway.visual_sheet_renderer import render_markdown_table_to_image
+                    png_path = render_markdown_table_to_image(table_block, title=title)
+                except Exception:
+                    pass
+
+                if png_path and os.path.isfile(png_path) and os.path.getsize(png_path) > 500:
+                    results: List[str] = []
+                    if pre:
+                        results.append(pre)
+                    payload = json.dumps({"path": png_path, "caption": "", "delay": 1.5}, ensure_ascii=False)
+                    results.append(f"IMAGE:{payload}")
+                    if post:
+                        results.append(post)
+                    return results
+                else:
+                    return [text]
+
+        return [text]
+
+    def _process_embedded_weather(self, text: str) -> List[str]:
+        if "```" in text or self._is_inside_code_block(text):
+            return [text]
+
+        if not self._WEATHER_RE.search(text):
             return [text]
 
         results: List[str] = []
         last_idx = 0
-        for m in self._CHEAT_SHEET_RE.finditer(text):
+        for m in self._WEATHER_RE.finditer(text):
+            self._has_emitted_weather = True
             start, end = m.span()
             pre = text[last_idx:start].strip()
             if pre:
                 results.append(pre)
-            body = (m.group("body") or "").strip()
-            if body:
-                results.append(body)
+            attrs_str = m.group("attrs") or m.group("self_attrs") or ""
+            attrs = self._parse_tag_attrs(attrs_str)
+            body = (m.group("body") or "").strip() if "body" in m.groupdict() and m.group("body") else ""
+
+            png_path = None
+            try:
+                from gateway.visual_card_renderer import render_weather_card_to_image
+                png_path = render_weather_card_to_image(attrs, body=body)
+            except Exception:
+                pass
+
+            if png_path:
+                payload = json.dumps({"path": png_path, "caption": "", "delay": 1.5}, ensure_ascii=False)
+                results.append(f"IMAGE:{payload}")
+            else:
+                if body:
+                    results.append(body)
+            last_idx = end
+        post = text[last_idx:].strip()
+        if post:
+            results.append(post)
+        return results or [text]
+
+    def _process_embedded_movies(self, text: str) -> List[str]:
+        if "```" in text or self._is_inside_code_block(text):
+            return [text]
+
+        if not self._MOVIE_RE.search(text):
+            return [text]
+
+        results: List[str] = []
+        last_idx = 0
+        for m in self._MOVIE_RE.finditer(text):
+            start, end = m.span()
+            pre = text[last_idx:start].strip()
+            if pre:
+                results.append(pre)
+            attrs_str = m.group("attrs") or m.group("self_attrs") or ""
+            attrs = self._parse_tag_attrs(attrs_str)
+            body = (m.group("body") or "").strip() if "body" in m.groupdict() and m.group("body") else ""
+
+            png_path = None
+            try:
+                from gateway.visual_card_renderer import render_movie_card_to_image
+                png_path = render_movie_card_to_image(attrs, body=body)
+            except Exception:
+                pass
+
+            if png_path:
+                payload = json.dumps({"path": png_path, "caption": "", "delay": 1.5}, ensure_ascii=False)
+                results.append(f"IMAGE:{payload}")
+            else:
+                if body:
+                    results.append(body)
+            last_idx = end
+        post = text[last_idx:].strip()
+        if post:
+            results.append(post)
+        return results or [text]
+
+    def _process_embedded_words(self, text: str) -> List[str]:
+        if "```" in text or self._is_inside_code_block(text):
+            return [text]
+
+        if not self._WORD_RE.search(text):
+            return [text]
+
+        results: List[str] = []
+        last_idx = 0
+        for m in self._WORD_RE.finditer(text):
+            start, end = m.span()
+            pre = text[last_idx:start].strip()
+            if pre:
+                results.append(pre)
+            attrs_str = m.group("attrs") or m.group("self_attrs") or ""
+            attrs = self._parse_tag_attrs(attrs_str)
+            body = (m.group("body") or "").strip() if "body" in m.groupdict() and m.group("body") else ""
+
+            png_path = None
+            try:
+                from gateway.visual_card_renderer import render_word_card_to_image
+                png_path = render_word_card_to_image(attrs, body=body)
+            except Exception:
+                pass
+
+            if png_path:
+                payload = json.dumps({"path": png_path, "caption": "", "delay": 1.5}, ensure_ascii=False)
+                results.append(f"IMAGE:{payload}")
+            else:
+                if body:
+                    results.append(body)
             last_idx = end
         post = text[last_idx:].strip()
         if post:
@@ -953,12 +1300,30 @@ class BubbleParser:
                     stage6.append(s5)
                 else:
                     stage6.extend(self._process_embedded_cheat_sheets(s5))
-            stage7: List[str] = []
+            stage6b: List[str] = []
             for s6 in stage6:
                 if s6.startswith("EFFECT:") or s6.startswith("FILE:") or s6.startswith("IMAGE:"):
-                    stage7.append(s6)
+                    stage6b.append(s6)
                 else:
-                    stage7.extend(self._process_embedded_images(s6))
+                    stage6b.extend(self._process_embedded_weather(s6))
+            stage6c: List[str] = []
+            for s6b in stage6b:
+                if s6b.startswith("EFFECT:") or s6b.startswith("FILE:") or s6b.startswith("IMAGE:"):
+                    stage6c.append(s6b)
+                else:
+                    stage6c.extend(self._process_embedded_movies(s6b))
+            stage6d: List[str] = []
+            for s6c in stage6c:
+                if s6c.startswith("EFFECT:") or s6c.startswith("FILE:") or s6c.startswith("IMAGE:"):
+                    stage6d.append(s6c)
+                else:
+                    stage6d.extend(self._process_embedded_words(s6c))
+            stage7: List[str] = []
+            for s6d in stage6d:
+                if s6d.startswith("EFFECT:") or s6d.startswith("FILE:") or s6d.startswith("IMAGE:"):
+                    stage7.append(s6d)
+                else:
+                    stage7.extend(self._process_embedded_images(s6d))
             stage7b: List[str] = []
             for s7 in stage7:
                 if s7.startswith("EFFECT:") or s7.startswith("FILE:") or s7.startswith("IMAGE:"):
@@ -1001,58 +1366,91 @@ class BubbleParser:
         while True:
             candidates = []
 
+            # 1. Tapback
             m_tap = self._TAPBACK_RE.search(self._buffer)
             if m_tap and not self._is_inside_code_block(self._buffer[:m_tap.start()]):
                 candidates.append((m_tap.start(), "tapback", m_tap))
 
+            # 2. Poll
             m_poll = self._POLL_RE.search(self._buffer)
             if m_poll and not self._is_inside_code_block(self._buffer[:m_poll.start()]):
                 candidates.append((m_poll.start(), "poll", m_poll))
 
+            # 3. Calendar
             m_cal = self._CALENDAR_RE.search(self._buffer)
             if m_cal and not self._is_inside_code_block(self._buffer[:m_cal.start()]):
                 candidates.append((m_cal.start(), "calendar", m_cal))
 
+            # 4. Map
             m_map = self._MAP_RE.search(self._buffer)
             if m_map and not self._is_inside_code_block(self._buffer[:m_map.start()]):
                 candidates.append((m_map.start(), "map", m_map))
 
+            # 5. Effect
             m_eff = self._EFFECT_RE.search(self._buffer)
             if m_eff and not self._is_inside_code_block(self._buffer[:m_eff.start()]):
                 candidates.append((m_eff.start(), "effect", m_eff))
 
+            # 6. Spoiler
             m_spoil = self._SPOILER_RE.search(self._buffer)
             if m_spoil and not self._is_inside_code_block(self._buffer[:m_spoil.start()]):
                 candidates.append((m_spoil.start(), "spoiler", m_spoil))
 
+            # 7. Apple Maps bare URL
             m_map_url = self._APPLE_MAPS_URL_RE.search(self._buffer)
             if m_map_url and not self._is_inside_code_block(self._buffer[:m_map_url.start()]):
-                # Wait for trailing whitespace or stream end to ensure complete URL
+                # If URL ends at buffer boundary without trailing whitespace, wait unless finish
                 if m_map_url.end() < len(self._buffer) or is_finish:
                     candidates.append((m_map_url.start(), "apple_maps_url", m_map_url))
 
+            # 7b. Shortcuts bare URL
             m_sc_url = self._SHORTCUTS_URL_RE.search(self._buffer)
             if m_sc_url and not self._is_inside_code_block(self._buffer[:m_sc_url.start()]):
                 if m_sc_url.end() < len(self._buffer) or is_finish:
                     candidates.append((m_sc_url.start(), "shortcuts_url", m_sc_url))
 
+            # 7c. Action Tag
             m_act = self._ACTION_RE.search(self._buffer)
             if m_act and not self._is_inside_code_block(self._buffer[:m_act.start()]):
                 candidates.append((m_act.start(), "action", m_act))
 
+            # 7d. Apple Music / Podcasts bare URL
             m_music_url = self._APPLE_MUSIC_URL_RE.search(self._buffer)
             if m_music_url and not self._is_inside_code_block(self._buffer[:m_music_url.start()]):
                 if m_music_url.end() < len(self._buffer) or is_finish:
                     candidates.append((m_music_url.start(), "apple_music_url", m_music_url))
 
+            # 8. Contact Card
             m_contact = self._CONTACT_RE.search(self._buffer)
             if m_contact and not self._is_inside_code_block(self._buffer[:m_contact.start()]):
                 candidates.append((m_contact.start(), "contact", m_contact))
 
+            # 9. Cheat Sheet / Visual Table
+            m_sheet = self._CHEAT_SHEET_RE.search(self._buffer)
+            if m_sheet and not self._is_inside_code_block(self._buffer[:m_sheet.start()]):
+                candidates.append((m_sheet.start(), "cheat_sheet", m_sheet))
+
+            # 9b. Weather Capsule
+            m_weather = self._WEATHER_RE.search(self._buffer)
+            if m_weather and not self._is_inside_code_block(self._buffer[:m_weather.start()]):
+                candidates.append((m_weather.start(), "weather", m_weather))
+
+            # 9c. Movie Review Dossier
+            m_movie = self._MOVIE_RE.search(self._buffer)
+            if m_movie and not self._is_inside_code_block(self._buffer[:m_movie.start()]):
+                candidates.append((m_movie.start(), "movie", m_movie))
+
+            # 9d. English Word / Lexicon Card
+            m_word = self._WORD_RE.search(self._buffer)
+            if m_word and not self._is_inside_code_block(self._buffer[:m_word.start()]):
+                candidates.append((m_word.start(), "word", m_word))
+
+            # 10. Image Tag
             m_img = self._IMAGE_TAG_RE.search(self._buffer)
             if m_img and not self._is_inside_code_block(self._buffer[:m_img.start()]):
                 candidates.append((m_img.start(), "image", m_img))
 
+            # 10b. Media directive (MEDIA: / IMAGE: / FILE:)
             m_media = self._MEDIA_DIRECTIVE_RE.search(self._buffer)
             if m_media:
                 pre_str = m_media.group("pre") or ""
@@ -1062,12 +1460,14 @@ class BubbleParser:
                     if tag_end < len(self._buffer) or is_finish or self._buffer.endswith(('\n', '\r', '<', '>')):
                         candidates.append((tag_start, "media_directive", (m_media, tag_start, tag_end)))
 
+            # 11. Bubble open tag
             open_idx = self._buffer.find(self._OPEN_TAG)
             if open_idx != -1 and open_idx >= 2 and self._buffer[open_idx-2:open_idx+len(self._OPEN_TAG)+2] == self._SEP_MARKER:
                 open_idx = -1
             if open_idx != -1 and not self._is_inside_code_block(self._buffer[:open_idx]):
                 candidates.append((open_idx, "bubble_open", open_idx))
 
+            # 9. Sep marker
             sep_idx = self._buffer.find(self._SEP_MARKER)
             if sep_idx != -1 and not self._is_inside_code_block(self._buffer[:sep_idx]):
                 candidates.append((sep_idx, "sep_marker", sep_idx))
@@ -1180,7 +1580,11 @@ class BubbleParser:
 
                 if body:
                     bubbles.extend(self._emit_bubble(body))
-                bubbles.append(maps_url)
+                loc_vcf = self._generate_location_vcf(title=title, query=query, address=address, ll=ll)
+                if loc_vcf:
+                    bubbles.append(f"FILE:{loc_vcf}")
+                else:
+                    bubbles.append(maps_url)
                 self._has_emitted_map = True
                 continue
 
@@ -1294,6 +1698,120 @@ class BubbleParser:
                 vcf_path = self._generate_vcf(name, phone, email, org, title, address, note)
                 if vcf_path:
                     bubbles.append(f"FILE:{vcf_path}")
+                continue
+
+            elif c_type == "cheat_sheet":
+                start, end = c_obj.span()
+                attrs_str = c_obj.group("attrs") or ""
+                attrs = self._parse_tag_attrs(attrs_str)
+                title = attrs.get("title") or "速查清单"
+                subtitle = attrs.get("subtitle") or ""
+                body = (c_obj.group("body") or "").strip()
+
+                has_weather_in_buffer = bool(self._WEATHER_RE.search(self._buffer))
+                is_weather_dup = (self._has_emitted_weather or has_weather_in_buffer) and self._is_weather_content(title, body)
+
+                if not is_weather_dup:
+                    extracted_opts = self._extract_options_from_table(body, title=title)
+                    if 2 <= len(extracted_opts) <= 4:
+                        self._cheat_sheet_options = extracted_opts
+                        self._cheat_sheet_title = title
+
+                self._buffer = self._buffer[end:]
+                if pre_clean:
+                    bubbles.extend(self._emit_bubble(pre_clean))
+
+                if is_weather_dup:
+                    continue
+
+                png_path = None
+                try:
+                    from gateway.visual_sheet_renderer import render_markdown_table_to_image
+                    png_path = render_markdown_table_to_image(body, title=title, subtitle=subtitle)
+                except Exception:
+                    pass
+
+                if png_path and os.path.isfile(png_path) and os.path.getsize(png_path) > 500:
+                    payload = json.dumps({"path": png_path, "caption": "", "delay": 1.5}, ensure_ascii=False)
+                    bubbles.append(f"IMAGE:{payload}")
+                else:
+                    if body:
+                        bubbles.extend(self._emit_bubble(body))
+                continue
+
+            elif c_type == "weather":
+                self._has_emitted_weather = True
+                start, end = c_obj.span()
+                attrs_str = c_obj.group("attrs") or c_obj.group("self_attrs") or ""
+                attrs = self._parse_tag_attrs(attrs_str)
+                body = (c_obj.group("body") or "").strip() if "body" in c_obj.groupdict() and c_obj.group("body") else ""
+                self._buffer = self._buffer[end:]
+                if pre_clean:
+                    bubbles.extend(self._emit_bubble(pre_clean))
+
+                png_path = None
+                try:
+                    from gateway.visual_card_renderer import render_weather_card_to_image
+                    png_path = render_weather_card_to_image(attrs, body=body)
+                except Exception:
+                    pass
+
+                if png_path and os.path.isfile(png_path) and os.path.getsize(png_path) > 500:
+                    payload = json.dumps({"path": png_path, "caption": "", "delay": 1.5}, ensure_ascii=False)
+                    bubbles.append(f"IMAGE:{payload}")
+                else:
+                    if body:
+                        bubbles.extend(self._emit_bubble(body))
+                continue
+
+            elif c_type == "movie":
+                self._has_emitted_movie = True
+                start, end = c_obj.span()
+                attrs_str = c_obj.group("attrs") or c_obj.group("self_attrs") or ""
+                attrs = self._parse_tag_attrs(attrs_str)
+                body = (c_obj.group("body") or "").strip() if "body" in c_obj.groupdict() and c_obj.group("body") else ""
+                self._buffer = self._buffer[end:]
+                if pre_clean:
+                    bubbles.extend(self._emit_bubble(pre_clean))
+
+                png_path = None
+                try:
+                    from gateway.visual_card_renderer import render_movie_card_to_image
+                    png_path = render_movie_card_to_image(attrs, body=body)
+                except Exception:
+                    pass
+
+                if png_path and os.path.isfile(png_path) and os.path.getsize(png_path) > 500:
+                    payload = json.dumps({"path": png_path, "caption": "", "delay": 1.5}, ensure_ascii=False)
+                    bubbles.append(f"IMAGE:{payload}")
+                else:
+                    if body:
+                        bubbles.extend(self._emit_bubble(body))
+                continue
+
+            elif c_type == "word":
+                self._has_emitted_word = True
+                start, end = c_obj.span()
+                attrs_str = c_obj.group("attrs") or c_obj.group("self_attrs") or ""
+                attrs = self._parse_tag_attrs(attrs_str)
+                body = (c_obj.group("body") or "").strip() if "body" in c_obj.groupdict() and c_obj.group("body") else ""
+                self._buffer = self._buffer[end:]
+                if pre_clean:
+                    bubbles.extend(self._emit_bubble(pre_clean))
+
+                png_path = None
+                try:
+                    from gateway.visual_card_renderer import render_word_card_to_image
+                    png_path = render_word_card_to_image(attrs, body=body)
+                except Exception:
+                    pass
+
+                if png_path and os.path.isfile(png_path) and os.path.getsize(png_path) > 500:
+                    payload = json.dumps({"path": png_path, "caption": "", "delay": 1.5}, ensure_ascii=False)
+                    bubbles.append(f"IMAGE:{payload}")
+                else:
+                    if body:
+                        bubbles.extend(self._emit_bubble(body))
                 continue
 
             elif c_type == "media_directive":

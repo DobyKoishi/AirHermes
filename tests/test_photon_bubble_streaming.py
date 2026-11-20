@@ -3,9 +3,8 @@
 
 
 import asyncio
-
 import json
-
+import os
 import unittest
 
 from typing import Any, Dict, List, Optional
@@ -1014,30 +1013,23 @@ class TestPhotonBubbleStreaming(unittest.IsolatedAsyncioTestCase):
             content = fp.read()
 
         self.assertIn("BEGIN:VCALENDAR", content)
-
-        self.assertIn("SUMMARY:Q4复盘会", content)
-
+        self.assertIn("SUMMARY;CHARSET=UTF-8:Q4复盘会", content)
         self.assertIn("DTSTART:20261106T140000", content)
-
-        self.assertIn("LOCATION:腾讯会议", content)
-
-
+        self.assertIn("LOCATION;CHARSET=UTF-8:腾讯会议", content)
 
     def test_bubble_parser_map_extraction(self):
-
         p = BubbleParser()
-
         xml = '<map query="上海迪士尼度假区" title="上海迪士尼" address="川沙新镇" />'
-
         res = p.feed(xml)
-
         res.extend(p.finish())
-
         self.assertEqual(len(res), 1)
-
-        self.assertTrue(res[0].startswith("https://maps.apple.com/"))
-
-        self.assertIn("maps.apple.com/?q=", res[0])
+        self.assertTrue(res[0].startswith("FILE:") and res[0].endswith(".loc.vcf"))
+        loc_path = res[0][len("FILE:"):].strip()
+        self.assertTrue(os.path.exists(loc_path))
+        with open(loc_path, "r", encoding="utf-8-sig") as fp:
+            vcf_data = fp.read()
+        self.assertIn("FN;CHARSET=UTF-8:上海迪士尼", vcf_data)
+        self.assertIn("maps.apple.com/?q=", vcf_data)
 
 
 

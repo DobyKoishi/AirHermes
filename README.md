@@ -24,6 +24,34 @@ Default chat agent integrations send whole-turn responses as a single monolithic
 
 ---
 
+## Architecture Flow
+
+```text
+  LLM Delta Stream
+         │
+         ▼
+┌──────────────────┐
+│   BubbleParser   │ ◄─── Extracts <bubble>, <tapback>, <poll>, <effect>, etc.
+└────────┬─────────┘      (Preserves code fences, isolates URLs, paragraph fallback)
+         │
+         ▼
+┌──────────────────┐
+│  StreamingQueue  │ ◄─── 5-state lifecycle tracking (QUEUED -> SENDING -> SENT)
+└────────┬─────────┘      (400ms idle pacing, circuit breaker, late ACK reconciliation)
+         │
+         ▼
+┌──────────────────┐
+│  Photon Adapter  │ ◄─── Dispatches to Node Sidecar via HTTP JSON
+└────────┬─────────┘
+         │
+         ▼
+┌──────────────────┐
+│ iMessage Devices │ ◄─── Discrete bubbles, interactive poll cards, full-screen effects
+└──────────────────┘
+```
+
+---
+
 ## Directory Structure
 
 ```text
@@ -39,6 +67,7 @@ hermes-photon-deluxe/
 │       ├── package.json
 │       └── patch-spectrum-poll.mjs
 ├── patches/                       # Unified diffs for core gateway hooks
+│   ├── hermes_all.patch           # All-in-one patch
 │   ├── run_turn.patch
 │   ├── run_turn_runner.patch
 │   └── session.patch

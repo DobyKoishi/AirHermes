@@ -109,7 +109,7 @@ AirHermes/
 | `<tapback>emoji</tapback>` | 原生 iMessage 表态 | `<tapback>❤️</tapback>`（支持 ❤️ 👍 👎 😆 ‼️ ❓） |
 | `<poll title="...">` | 原生可点选投票卡片 | `<poll title="周末去哪？"><option>海边</option><option>露营</option></poll>` |
 | `<calendar title="..." start="..." />` | 原生 Apple 日历卡片 | `<calendar title="项目周会" start="2026-11-21 14:00" />`（生成干净 .ics） |
-| `<map query="..." title="..." />` | 原生 Apple 地图卡片 | `<map query="上海迪士尼度假区" title="迪士尼" />` |
+| `<map name="..." coordinate="..." address="..." />` | 原生 Apple 地图卡片（带即时视网膜预览） | `<map name="旺角一兰拉面" coordinate="22.3193,114.1694" address="香港九龙旺角洗衣街88号" />` |
 | `<contact name="..." phone="..." />` | 原生通讯录名片 | `<contact name="张三" phone="13800000000" />`（生成标准 .vcf） |
 | `<effect type="...">文本</effect>` | 全屏 iMessage 特效 | `<effect type="fireworks">考试全过！🎉</effect>` |
 | `<invisible>文本</invisible>` | 隐形墨水气泡 | `<invisible>刮开看惊喜答案</invisible>` |

@@ -1030,12 +1030,20 @@ class TestPhotonBubbleStreaming(unittest.IsolatedAsyncioTestCase):
 
     def test_bubble_parser_map_extraction(self):
         p = BubbleParser()
-        xml = '<map query="上海迪士尼度假区" title="上海迪士尼" address="川沙新镇" />'
+        xml = '<map coordinate="22.224483,113.259169" name="Taoyuan Road" />'
         res = p.feed(xml)
         res.extend(p.finish())
         self.assertEqual(len(res), 1)
-        self.assertTrue(res[0].startswith("https://maps.apple.com/"))
-        self.assertIn("maps.apple.com/?q=", res[0])
+        self.assertEqual(res[0], "https://maps.apple.com/place?coordinate=22.224483,113.259169&name=Taoyuan%20Road&map=explore")
+
+        # Test city fallback coordinate resolution
+        p2 = BubbleParser()
+        xml2 = '<map query="一兰拉面 旺角店" title="一兰拉面 (香港旺角店)" address="香港九龙旺角洗衣街88号碧荟地下B铺" />'
+        res2 = p2.feed(xml2)
+        res2.extend(p2.finish())
+        self.assertEqual(len(res2), 1)
+        self.assertIn("https://maps.apple.com/place?coordinate=22.3193,114.1694", res2[0])
+        self.assertIn("map=explore", res2[0])
 
 
 

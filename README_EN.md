@@ -109,7 +109,7 @@ Output these lightweight tags in your agent's system prompt or tool responses:
 | `<tapback>emoji</tapback>` | Native Apple Tapback reaction | `<tapback>❤️</tapback>` (supports ❤️ 👍 👎 😆 ‼️ ❓) |
 | `<poll title="...">` | Interactive 1-tap poll card | `<poll title="Lunch?"><option>Sushi</option><option>Tacos</option></poll>` |
 | `<calendar title="..." start="..." />` | Native Apple Calendar event | `<calendar title="Flight" start="2026-11-21 09:00" />` (clean `.ics`) |
-| `<map query="..." title="..." />` | Native Apple Maps location card | `<map query="Shanghai Disney Resort" title="Disney" />` |
+| `<map name="..." coordinate="..." address="..." />` | Native Apple Maps Unified Place Card (with instant Retina snapshot) | `<map name="Apple Park" coordinate="37.3348,-122.0090" address="1 Apple Park Way" />` |
 | `<contact name="..." phone="..." />` | Native vCard contact card | `<contact name="Alice" phone="+1234567890" />` (clean `.vcf`) |
 | `<effect type="...">text</effect>` | Fullscreen iMessage effect | `<effect type="confetti">You passed! 🎉</effect>` |
 | `<invisible>text</invisible>` | Invisible ink bubble effect | `<invisible>Secret spoiler</invisible>` |

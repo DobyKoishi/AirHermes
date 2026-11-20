@@ -21,7 +21,7 @@ import re
 import uuid
 from datetime import datetime, timedelta, timezone
 from typing import List, Optional
-from urllib.parse import quote_plus
+from urllib.parse import quote, quote_plus
 
 
 class BubbleParser:
@@ -90,6 +90,104 @@ class BubbleParser:
         re.compile(r'.*?(?:土区|国区|Apple\s*Music|播客|音乐|歌单)?(?:搜索直达|歌单|播放器)?(?:给你)?(?:备好|生成好|整理好)啦?[，,、\s]*点(?:开|击)?(?:就能|即可|直接)?(?:直接)?(?:拉起|打开)?(?:大图|原生)?(?:播放器|卡片)?(?:试听|收听|播放)?[:：]?', re.IGNORECASE),
         re.compile(r'.*?(?:搜索直达|大图播放器).*?[:：]?', re.IGNORECASE),
     ]
+
+    _CITY_COORDINATES = {
+        # Hong Kong / Macao
+        "旺角": "22.3193,114.1694",
+        "尖沙咀": "22.2988,114.1722",
+        "中环": "22.2819,114.1582",
+        "铜锣湾": "22.2800,114.1850",
+        "湾仔": "22.2770,114.1751",
+        "油麻地": "22.3129,114.1708",
+        "九龙": "22.3204,114.1698",
+        "香港": "22.3193,114.1694",
+        "澳门": "22.1987,113.5439",
+        "氹仔": "22.1568,113.5587",
+        # Guangdong
+        "越秀": "23.1415,113.2625",
+        "天河": "23.1246,113.3611",
+        "海珠": "23.0833,113.3172",
+        "荔湾": "23.1259,113.2430",
+        "白云": "23.1579,113.2731",
+        "番禺": "22.9388,113.3843",
+        "黄埔": "23.1064,113.4589",
+        "花都": "23.4036,113.2201",
+        "南沙": "22.8028,113.5248",
+        "广州": "23.1291,113.2644",
+        "南山": "22.5329,113.9303",
+        "福田": "22.5215,114.0551",
+        "罗湖": "22.5482,114.1315",
+        "宝安": "22.5533,113.8831",
+        "龙岗": "22.7215,114.2477",
+        "龙华": "22.6913,114.0298",
+        "深圳": "22.5431,114.0579",
+        "斗门": "22.2082,113.2965",
+        "香洲": "22.2667,113.5433",
+        "金湾": "22.0636,113.3444",
+        "横琴": "22.1408,113.5358",
+        "珠海": "22.2707,113.5767",
+        "佛山": "23.0215,113.1214",
+        "东莞": "23.0205,113.7518",
+        "中山": "22.5176,113.3928",
+        "惠州": "23.1118,114.4162",
+        "汕头": "23.3541,116.6820",
+        # Top Metros
+        "海淀": "39.9599,116.2981",
+        "朝阳": "39.9215,116.4431",
+        "东城": "39.9175,116.4188",
+        "西城": "39.9123,116.3659",
+        "丰台": "39.8585,116.2862",
+        "北京": "39.9042,116.4074",
+        "黄浦": "31.2317,121.4844",
+        "徐汇": "31.1883,121.4365",
+        "静安": "31.2288,121.4533",
+        "浦东": "31.2211,121.5447",
+        "杨浦": "31.2595,121.5260",
+        "虹口": "31.2647,121.5052",
+        "上海": "31.2304,121.4737",
+        "西湖": "30.2431,120.1344",
+        "滨江": "30.2084,120.2119",
+        "余杭": "30.4199,120.3015",
+        "杭州": "30.2741,120.1551",
+        "成都": "30.5728,104.0668",
+        "重庆": "29.5630,106.5516",
+        "武汉": "30.5928,114.3055",
+        "南京": "32.0603,118.7969",
+        "西安": "34.3416,108.9398",
+        "长沙": "28.2282,112.9388",
+        "苏州": "31.2989,120.5853",
+        "天津": "39.0842,117.2009",
+        "青岛": "36.0671,120.3826",
+        "厦门": "24.4798,118.0894",
+        "福州": "26.0745,119.2965",
+        "济南": "36.6512,117.1201",
+        "郑州": "34.7579,113.6654",
+        "合肥": "31.8206,117.2272",
+        "南昌": "28.6829,115.8582",
+        "昆明": "25.0406,102.7123",
+        "贵阳": "26.6470,106.6302",
+        "南宁": "22.8170,108.3665",
+        "海口": "20.0440,110.1999",
+        "三亚": "18.2528,109.5120",
+        "台北": "25.0330,121.5654",
+        "高雄": "22.6273,120.3014",
+        # International
+        "东京": "35.6762,139.6503",
+        "新宿": "35.6938,139.7034",
+        "涩谷": "35.6580,139.7016",
+        "大阪": "34.6937,135.5023",
+        "京都": "35.0116,135.7681",
+        "首尔": "37.5665,126.9780",
+        "新加坡": "1.3521,103.8198",
+        "曼谷": "13.7563,100.5018",
+        "伦敦": "51.5074,-0.1278",
+        "巴黎": "48.8566,2.3522",
+        "纽约": "40.7128,-74.0060",
+        "旧金山": "37.7749,-122.4194",
+        "洛杉矶": "34.0522,-118.2437",
+        "西雅图": "47.6062,-122.3321",
+        "悉尼": "-33.8688,151.2093",
+    }
 
     @classmethod
     def _prune_robotic_boilerplate(cls, text: str) -> str:
@@ -865,6 +963,45 @@ class BubbleParser:
             results.append(post)
         return results or [text]
 
+    @classmethod
+    def _build_apple_maps_url(
+        cls,
+        name: str = "",
+        coordinate: str = "",
+        address: str = "",
+        query: str = "",
+    ) -> str:
+        raw = (query or name or "").strip()
+        if raw.startswith("http://") or raw.startswith("https://") or raw.startswith("maps://"):
+            return raw
+
+        clean_name = (name or query or "地图定位").strip()
+        clean_coord = (coordinate or "").strip()
+        clean_addr = (address or "").strip()
+
+        if not clean_coord:
+            haystack = f"{clean_addr} {clean_name} {raw}"
+            m = re.search(r'(-?\d{1,3}\.\d{3,8})\s*,\s*(-?\d{1,3}\.\d{3,8})', haystack)
+            if m:
+                clean_coord = f"{m.group(1)},{m.group(2)}"
+            else:
+                for k, v in cls._CITY_COORDINATES.items():
+                    if k in haystack:
+                        clean_coord = v
+                        break
+
+        params = []
+        if clean_coord:
+            params.append(("coordinate", clean_coord))
+        if clean_name:
+            params.append(("name", clean_name))
+        if clean_addr:
+            params.append(("address", clean_addr))
+        params.append(("map", "explore"))
+
+        qs = "&".join(f"{k}={quote(v, safe=',+')}" for k, v in params)
+        return f"https://maps.apple.com/place?{qs}"
+
     def _process_embedded_maps(self, text: str) -> List[str]:
         if "```" in text or self._is_inside_code_block(text):
             return [text]
@@ -879,18 +1016,16 @@ class BubbleParser:
             attrs_str = m.group("attrs") or m.group("self_attrs") or ""
             attrs = self._parse_tag_attrs(attrs_str)
             body = (m.group("body") or "").strip() if "body" in m.groupdict() and m.group("body") else ""
-            query = attrs.get("query") or attrs.get("q") or attrs.get("name") or body or attrs.get("title") or ""
-            title = attrs.get("title") or attrs.get("name") or query or "地图定位"
+            coord = attrs.get("coordinate") or attrs.get("coords") or attrs.get("ll") or attrs.get("coord") or attrs.get("location") or ""
+            if not coord and attrs.get("lat") and (attrs.get("lon") or attrs.get("lng") or attrs.get("long")):
+                coord = f"{attrs['lat']},{attrs.get('lon') or attrs.get('lng') or attrs.get('long')}"
+            name = attrs.get("name") or attrs.get("title") or attrs.get("query") or attrs.get("q") or body or "地图定位"
             address = attrs.get("address") or attrs.get("addr") or ""
-            ll = attrs.get("ll") or attrs.get("coords") or attrs.get("location") or ""
+            query = attrs.get("query") or attrs.get("q") or ""
 
-            maps_url = f"https://maps.apple.com/?q={quote_plus(query, safe=',+')}"
-            if address:
-                maps_url += f"&address={quote_plus(address, safe=',+')}"
-            if ll:
-                maps_url += f"&ll={ll}"
+            maps_url = self._build_apple_maps_url(name=name, coordinate=coord, address=address, query=query)
 
-            if body:
+            if body and body != name:
                 results.append(body)
             results.append(maps_url)
             self._has_emitted_map = True
@@ -1558,23 +1693,21 @@ class BubbleParser:
                 attrs_str = c_obj.group("attrs") or c_obj.group("self_attrs") or ""
                 attrs = self._parse_tag_attrs(attrs_str)
                 body = (c_obj.group("body") or "").strip() if "body" in c_obj.groupdict() and c_obj.group("body") else ""
-                query = attrs.get("query") or attrs.get("q") or attrs.get("name") or body or attrs.get("title") or ""
-                title = attrs.get("title") or attrs.get("name") or query or "地图定位"
+                coord = attrs.get("coordinate") or attrs.get("coords") or attrs.get("ll") or attrs.get("coord") or attrs.get("location") or ""
+                if not coord and attrs.get("lat") and (attrs.get("lon") or attrs.get("lng") or attrs.get("long")):
+                    coord = f"{attrs['lat']},{attrs.get('lon') or attrs.get('lng') or attrs.get('long')}"
+                name = attrs.get("name") or attrs.get("title") or attrs.get("query") or attrs.get("q") or body or "地图定位"
                 address = attrs.get("address") or attrs.get("addr") or ""
-                ll = attrs.get("ll") or attrs.get("coords") or attrs.get("location") or ""
+                query = attrs.get("query") or attrs.get("q") or ""
 
                 self._buffer = self._buffer[end:]
 
                 if pre_clean:
                     bubbles.extend(self._emit_bubble(pre_clean))
 
-                maps_url = f"https://maps.apple.com/?q={quote_plus(query, safe=',+')}"
-                if address:
-                    maps_url += f"&address={quote_plus(address, safe=',+')}"
-                if ll:
-                    maps_url += f"&ll={ll}"
+                maps_url = self._build_apple_maps_url(name=name, coordinate=coord, address=address, query=query)
 
-                if body:
+                if body and body != name:
                     bubbles.extend(self._emit_bubble(body))
                 bubbles.append(maps_url)
                 self._has_emitted_map = True

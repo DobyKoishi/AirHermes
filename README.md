@@ -79,6 +79,17 @@ hermes-photon-deluxe/
 
 ---
 
+## Prerequisites
+
+Hermes Photon Deluxe upgrades the official Hermes Photon integration. You will need:
+
+1. A working [Hermes Agent](https://github.com/NousResearch/hermes-agent) repository.
+2. iMessage paired via Photon:
+   - If you **already configured Photon** (`hermes photon setup`): running `python install.py` immediately elevates your bot to Deluxe upon launching `hermes gateway`.
+   - If this is a **fresh setup**: run `hermes photon setup` (to pair your phone number / Apple ID) before or after running `install.py`.
+
+---
+
 ## Installation
 
 ### Method 1: Using the Installer

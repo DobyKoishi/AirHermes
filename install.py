@@ -112,6 +112,8 @@ def install(target_dir: Path) -> bool:
         subprocess.run(["node", "patch-spectrum-poll.mjs"], cwd=sidecar_dir)
 
     print("\n[+] Hermes Photon Deluxe installed successfully!")
+    print("[*] Note: If you haven't linked iMessage yet, run 'hermes photon setup'.")
+    print("[*] Launch your bot anytime with: hermes gateway")
     return all_patched
 
 

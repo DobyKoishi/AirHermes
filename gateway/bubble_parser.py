@@ -892,11 +892,7 @@ class BubbleParser:
 
             if body:
                 results.append(body)
-            loc_vcf = self._generate_location_vcf(title=title, query=query, address=address, ll=ll)
-            if loc_vcf:
-                results.append(f"FILE:{loc_vcf}")
-            else:
-                results.append(maps_url)
+            results.append(maps_url)
             self._has_emitted_map = True
             last_idx = end
             trailing_match = re.match(r'^\s*(?:https?://(?:maps\.apple\.com|maps\.google\.com)[^\s<>"\'\)]*|maps://[^\s<>"\'\)]*)', text[last_idx:])
@@ -1580,11 +1576,7 @@ class BubbleParser:
 
                 if body:
                     bubbles.extend(self._emit_bubble(body))
-                loc_vcf = self._generate_location_vcf(title=title, query=query, address=address, ll=ll)
-                if loc_vcf:
-                    bubbles.append(f"FILE:{loc_vcf}")
-                else:
-                    bubbles.append(maps_url)
+                bubbles.append(maps_url)
                 self._has_emitted_map = True
                 continue
 

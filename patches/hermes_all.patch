@@ -1,5 +1,5 @@
 diff --git a/gateway/bubble_parser.py b/gateway/bubble_parser.py
-index 4bea223640..2f45938020 100644
+index 4bea223640..e120f6e0b3 100644
 --- a/gateway/bubble_parser.py
 +++ b/gateway/bubble_parser.py
 @@ -110,10 +110,16 @@ class BubbleParser:
@@ -248,20 +248,7 @@ index 4bea223640..2f45938020 100644
                  fp.write(ics_content)
              return file_path
          except Exception:
-@@ -789,7 +892,11 @@ class BubbleParser:
- 
-             if body:
-                 results.append(body)
--            results.append(maps_url)
-+            loc_vcf = self._generate_location_vcf(title=title, query=query, address=address, ll=ll)
-+            if loc_vcf:
-+                results.append(f"FILE:{loc_vcf}")
-+            else:
-+                results.append(maps_url)
-             self._has_emitted_map = True
-             last_idx = end
-             trailing_match = re.match(r'^\s*(?:https?://(?:maps\.apple\.com|maps\.google\.com)[^\s<>"\'\)]*|maps://[^\s<>"\'\)]*)', text[last_idx:])
-@@ -894,7 +1001,7 @@ class BubbleParser:
+@@ -894,7 +997,7 @@ class BubbleParser:
                  except Exception as render_err:
                      pass
  
@@ -270,7 +257,7 @@ index 4bea223640..2f45938020 100644
                      payload = json.dumps({"path": png_path, "caption": "", "delay": 1.5}, ensure_ascii=False)
                      results.append(f"IMAGE:{payload}")
                  else:
-@@ -931,7 +1038,7 @@ class BubbleParser:
+@@ -931,7 +1034,7 @@ class BubbleParser:
                  except Exception:
                      pass
  
@@ -279,7 +266,7 @@ index 4bea223640..2f45938020 100644
                      results: List[str] = []
                      if pre:
                          results.append(pre)
-@@ -940,6 +1047,8 @@ class BubbleParser:
+@@ -940,6 +1043,8 @@ class BubbleParser:
                      if post:
                          results.append(post)
                      return results
@@ -288,7 +275,7 @@ index 4bea223640..2f45938020 100644
  
          return [text]
  
-@@ -1069,22 +1178,48 @@ class BubbleParser:
+@@ -1069,22 +1174,48 @@ class BubbleParser:
              attrs_str = m.group("attrs") or m.group("self_attrs") or ""
              attrs = self._parse_tag_attrs(attrs_str)
              body = (m.group("body") or "").strip() if "body" in m.groupdict() and m.group("body") else ""
@@ -341,7 +328,7 @@ index 4bea223640..2f45938020 100644
      def _process_embedded_actions(self, text: str) -> str:
          if "```" in text or self._is_inside_code_block(text):
              return text
-@@ -1189,12 +1324,18 @@ class BubbleParser:
+@@ -1189,12 +1320,18 @@ class BubbleParser:
                      stage7.append(s6d)
                  else:
                      stage7.extend(self._process_embedded_images(s6d))
@@ -363,7 +350,7 @@ index 4bea223640..2f45938020 100644
  
              for s8 in stage8:
                  if s8.startswith("FILE:") or s8.startswith("TAPBACK:") or s8.startswith("POLL:") or s8.startswith("EFFECT:") or s8.startswith("IMAGE:"):
-@@ -1309,6 +1450,16 @@ class BubbleParser:
+@@ -1309,6 +1446,16 @@ class BubbleParser:
              if m_img and not self._is_inside_code_block(self._buffer[:m_img.start()]):
                  candidates.append((m_img.start(), "image", m_img))
  
@@ -380,20 +367,7 @@ index 4bea223640..2f45938020 100644
              # 11. Bubble open tag
              open_idx = self._buffer.find(self._OPEN_TAG)
              if open_idx != -1 and open_idx >= 2 and self._buffer[open_idx-2:open_idx+len(self._OPEN_TAG)+2] == self._SEP_MARKER:
-@@ -1429,7 +1580,11 @@ class BubbleParser:
- 
-                 if body:
-                     bubbles.extend(self._emit_bubble(body))
--                bubbles.append(maps_url)
-+                loc_vcf = self._generate_location_vcf(title=title, query=query, address=address, ll=ll)
-+                if loc_vcf:
-+                    bubbles.append(f"FILE:{loc_vcf}")
-+                else:
-+                    bubbles.append(maps_url)
-                 self._has_emitted_map = True
-                 continue
- 
-@@ -1576,7 +1731,7 @@ class BubbleParser:
+@@ -1576,7 +1723,7 @@ class BubbleParser:
                  except Exception:
                      pass
  
@@ -402,7 +376,7 @@ index 4bea223640..2f45938020 100644
                      payload = json.dumps({"path": png_path, "caption": "", "delay": 1.5}, ensure_ascii=False)
                      bubbles.append(f"IMAGE:{payload}")
                  else:
-@@ -1601,7 +1756,7 @@ class BubbleParser:
+@@ -1601,7 +1748,7 @@ class BubbleParser:
                  except Exception:
                      pass
  
@@ -411,7 +385,7 @@ index 4bea223640..2f45938020 100644
                      payload = json.dumps({"path": png_path, "caption": "", "delay": 1.5}, ensure_ascii=False)
                      bubbles.append(f"IMAGE:{payload}")
                  else:
-@@ -1626,7 +1781,7 @@ class BubbleParser:
+@@ -1626,7 +1773,7 @@ class BubbleParser:
                  except Exception:
                      pass
  
@@ -420,7 +394,7 @@ index 4bea223640..2f45938020 100644
                      payload = json.dumps({"path": png_path, "caption": "", "delay": 1.5}, ensure_ascii=False)
                      bubbles.append(f"IMAGE:{payload}")
                  else:
-@@ -1651,7 +1806,7 @@ class BubbleParser:
+@@ -1651,7 +1798,7 @@ class BubbleParser:
                  except Exception:
                      pass
  
@@ -429,7 +403,7 @@ index 4bea223640..2f45938020 100644
                      payload = json.dumps({"path": png_path, "caption": "", "delay": 1.5}, ensure_ascii=False)
                      bubbles.append(f"IMAGE:{payload}")
                  else:
-@@ -1659,12 +1814,23 @@ class BubbleParser:
+@@ -1659,12 +1806,23 @@ class BubbleParser:
                          bubbles.extend(self._emit_bubble(body))
                  continue
  
@@ -454,7 +428,7 @@ index 4bea223640..2f45938020 100644
                  caption = attrs.get("caption") or attrs.get("title") or ""
                  try:
                      delay = float(attrs.get("delay", 1.5))
-@@ -1675,9 +1841,9 @@ class BubbleParser:
+@@ -1675,9 +1833,9 @@ class BubbleParser:
                  if pre_clean:
                      bubbles.extend(self._emit_bubble(pre_clean))
  

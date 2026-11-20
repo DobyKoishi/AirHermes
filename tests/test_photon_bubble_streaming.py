@@ -393,18 +393,29 @@ class TestPhotonBubbleStreaming(unittest.IsolatedAsyncioTestCase):
 
 
 
-        # Standalone bare URL has preview delay
+        # Standalone bare URL has fixed 0.6s preview delay
+
         pacer.update_finish_time(last_text="https://apnews.com/article/123")
-        self.assertTrue(1.0 <= pacer.current_interval_s <= 2.0)
+
+        self.assertAlmostEqual(pacer.current_interval_s, 0.600)
+
+
 
         # Short text: clamped to minimum
-        pacer.update_finish_time(last_text="好")
-        self.assertTrue(pacer.current_interval_s >= pacer.min_interval_s)
 
-        # Long text (80 chars): interval scales with length
+        pacer.update_finish_time(last_text="好")
+
+        self.assertAlmostEqual(pacer.current_interval_s, 0.525)
+
+
+
+        # Long text (80 chars): 0.5 + 80 * 0.025 = 2.5s
+
         long_txt = "A" * 80
+
         pacer.update_finish_time(last_text=long_txt)
-        self.assertTrue(pacer.current_interval_s > 1.5)
+
+        self.assertAlmostEqual(pacer.current_interval_s, 2.500)
 
 
 
@@ -1023,13 +1034,8 @@ class TestPhotonBubbleStreaming(unittest.IsolatedAsyncioTestCase):
         res = p.feed(xml)
         res.extend(p.finish())
         self.assertEqual(len(res), 1)
-        self.assertTrue(res[0].startswith("FILE:") and res[0].endswith(".loc.vcf"))
-        loc_path = res[0][len("FILE:"):].strip()
-        self.assertTrue(os.path.exists(loc_path))
-        with open(loc_path, "r", encoding="utf-8-sig") as fp:
-            vcf_data = fp.read()
-        self.assertIn("FN;CHARSET=UTF-8:上海迪士尼", vcf_data)
-        self.assertIn("maps.apple.com/?q=", vcf_data)
+        self.assertTrue(res[0].startswith("https://maps.apple.com/"))
+        self.assertIn("maps.apple.com/?q=", res[0])
 
 
 
@@ -1191,6 +1197,136 @@ class TestPhotonBubbleStreaming(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(res[5], 'EFFECT:{"effect": "invisible", "text": "通关新手村！✨"}')
 
+
+
+    def test_bubble_parser_auto_poll_guardrail_on_cheat_sheet(self):
+
+        """Verify that when a cheat_sheet is rendered without an explicit poll, the guardrail synthesizes one."""
+
+        raw = (
+
+            "<bubble>重庆周边自驾给你挑了2个方向：</bubble>\n"
+
+            "<cheat_sheet title=\"重庆自驾路线全对比\">\n"
+
+            "| 路线主题 | 亮点 |\n"
+
+            "| :--- | :--- |\n"
+
+            "| **路线A：武隆仙女山** | 高山草场与天坑 |\n"
+
+            "| **路线B：三峡夔门绝壁** | 峡谷天路 |\n"
+
+            "</cheat_sheet>\n"
+
+            "<bubble>你大概想自驾几天？想去哪条线我把具体的途径导航和避坑节点发你～</bubble>"
+
+        )
+
+        p = BubbleParser()
+
+        res = p.feed(raw) + p.finish()
+
+        self.assertEqual(len(res), 4)
+
+        self.assertEqual(res[0], "重庆周边自驾给你挑了2个方向：")
+
+        self.assertTrue(res[1].startswith("IMAGE:"))
+
+        self.assertEqual(res[2], "你大概想自驾几天？想去哪条线我把具体的途径导航和避坑节点发你～")
+
+        self.assertTrue(res[3].startswith("POLL:"))
+
+        poll_data = json.loads(res[3][len("POLL:"):])
+
+        self.assertEqual(poll_data["title"], "想先看哪条路线的行程细节？")
+
+        self.assertEqual(poll_data["options"], ["路线A：武隆仙女山", "路线B：三峡夔门绝壁"])
+
+
+
+    def test_bubble_parser_auto_poll_guardrail_skipped_when_poll_exists(self):
+
+        """Verify that when an explicit poll is already emitted, auto-poll does not duplicate."""
+
+        raw = (
+
+            "<cheat_sheet title=\"自驾对比\">\n"
+
+            "| 路线 | 亮点 |\n"
+
+            "| :--- | :--- |\n"
+
+            "| 路线A | 亮点A |\n"
+
+            "| 路线B | 亮点B |\n"
+
+            "</cheat_sheet>\n"
+
+            "<poll title=\"你更想选哪个？\"><option>路线A</option><option>路线B</option></poll>"
+
+        )
+
+        p = BubbleParser()
+
+        res = p.feed(raw) + p.finish()
+
+        # IMAGE: and POLL:
+
+        self.assertEqual(len(res), 2)
+
+        self.assertTrue(res[0].startswith("IMAGE:"))
+
+        self.assertTrue(res[1].startswith("POLL:"))
+
+        poll_data = json.loads(res[1][len("POLL:"):])
+
+        self.assertEqual(poll_data["title"], "你更想选哪个？")
+
+
+
+    def test_bubble_parser_auto_poll_guardrail_skipped_on_sequential_itinerary(self):
+
+        """Verify that sequential/itinerary tables (第一站, 14:30) do NOT synthesize a poll."""
+
+        raw = (
+
+            "<bubble>路线A的自驾规划如下：</bubble>\n"
+
+            "<cheat_sheet title=\"路线A：停靠规划与精选打卡点\">\n"
+
+            "| 阶段与时间 | 停靠节点 | 核心体验 |\n"
+
+            "| :--- | :--- | :--- |\n"
+
+            "| **第一站：14:30 - 15:30** | 格力海岸 | 海边散步 |\n"
+
+            "| **第二站：15:45 - 17:00** | 日月贝 | 贝壳建筑 |\n"
+
+            "</cheat_sheet>\n"
+
+            "<bubble>出发集合点给你备好啦</bubble>"
+
+        )
+
+        p = BubbleParser()
+
+        res = p.feed(raw) + p.finish()
+
+        # Should only have bubble, IMAGE, bubble -- NO POLL!
+
+        self.assertEqual(len(res), 3)
+
+        self.assertEqual(res[0], "路线A的自驾规划如下：")
+
+        self.assertTrue(res[1].startswith("IMAGE:"))
+
+        self.assertEqual(res[2], "出发集合点给你备好啦")
+
+
+
+
+
     def test_bubble_parser_apple_music_url_normalized_to_cn(self):
 
         """Verify Apple Music US link is auto-normalized to /tr/ and isolated into its own bubble."""
@@ -1262,7 +1398,175 @@ class TestPhotonBubbleStreaming(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(res, ["TAPBACK:❤️"])
 
 
-if __name__ == "__main__":
-    unittest.main()
 
+
+
+
+
+    def test_bubble_parser_weather_tag_streaming(self):
+        """Verify <weather> tag renders retina capsule image bubble during streaming."""
+        chunks = [
+            "<bubble>今天北京降温了哈</bubble>",
+            '<weather location="北京 · 朝阳" condition="rainy" temp="17°" feel="14°C" high_low="11° ~ 19°C" pop="85%" advice="出门带伞加件风衣" />',
+            "<bubble>出门记得保暖~</bubble>",
+        ]
+        p = BubbleParser()
+        res = []
+        for c in chunks:
+            res.extend(p.feed(c))
+        res.extend(p.finish())
+
+        self.assertEqual(len(res), 3)
+        self.assertEqual(res[0], "今天北京降温了哈")
+        self.assertTrue(res[1].startswith("IMAGE:"))
+        self.assertIn("weather_", res[1])
+        self.assertIn(".png", res[1])
+        self.assertEqual(res[2], "出门记得保暖~")
+
+    def test_bubble_parser_movie_tag_streaming(self):
+        """Verify <movie> tag renders retina review card during streaming."""
+        chunks = [
+            "<bubble>强烈推荐这部诺兰神作</bubble>",
+            '<movie title="奥本海默" year="2023" douban="8.8" imdb="8.9" director="克里斯托弗·诺兰" style="classic" quote="“普罗米修斯盗取了天火...”" />',
+            "<bubble>看完后劲特别大</bubble>",
+        ]
+        p = BubbleParser()
+        res = []
+        for c in chunks:
+            res.extend(p.feed(c))
+        res.extend(p.finish())
+
+        self.assertEqual(len(res), 3)
+        self.assertEqual(res[0], "强烈推荐这部诺兰神作")
+        self.assertTrue(res[1].startswith("IMAGE:"))
+        self.assertIn("movie_", res[1])
+        self.assertIn(".png", res[1])
+        self.assertEqual(res[2], "看完后劲特别大")
+
+    def test_bubble_parser_word_tag_streaming(self):
+        """Verify <word> tag renders signature Klein Blue retina card during streaming."""
+        chunks = [
+            "<bubble>这个词的语感非常美</bubble>",
+            '<word word="serendipity" phonetic="英 [ˌserənˈdɪpəti]" pos="n. 名词" meaning="不期而遇的惊喜与美好收获" roots="Serendip + -ity" />',
+            "<bubble>在文学作品里经常出现</bubble>",
+        ]
+        p = BubbleParser()
+        res = []
+        for c in chunks:
+            res.extend(p.feed(c))
+        res.extend(p.finish())
+
+        self.assertEqual(len(res), 3)
+        self.assertEqual(res[0], "这个词的语感非常美")
+        self.assertTrue(res[1].startswith("IMAGE:"))
+        self.assertIn("word_", res[1])
+        self.assertIn(".png", res[1])
+        self.assertEqual(res[2], "在文学作品里经常出现")
+
+    def test_bubble_parser_visual_cards_boilerplate_pruned(self):
+        """Verify robotic announcements for weather, movie, and word cards are pruned."""
+        p = BubbleParser()
+        raw = '天气胶囊给你生成好啦：<weather location="北京" condition="sunny" temp="22°" />'
+        res = p.feed(raw) + p.finish()
+        self.assertEqual(len(res), 1)
+        self.assertTrue(res[0].startswith("IMAGE:"))
+
+        p2 = BubbleParser()
+        raw2 = '🎬 电影卡片给你备好啦：<movie title="星际穿越" />'
+        res2 = p2.feed(raw2) + p2.finish()
+        self.assertEqual(len(res2), 1)
+        self.assertTrue(res2[0].startswith("IMAGE:"))
+
+        p3 = BubbleParser()
+        raw3 = '单词卡片已生成！<word word="epiphany" />'
+        res3 = p3.feed(raw3) + p3.finish()
+        self.assertEqual(len(res3), 1)
+        self.assertTrue(res3[0].startswith("IMAGE:"))
+
+
+    def test_bubble_parser_weather_duplicate_cheat_sheet_suppressed_batch(self):
+        """Verify that when a response contains both <weather> and a weather <cheat_sheet>, only the single weather card is emitted."""
+        raw_msg = (
+            '<weather location="珠海·斗门" condition="rainy" condition_text="阴天伴零星微雨" temp="25°" feel="22°C" high_low="25° ~ 26°C" pop="25%" humidity="81%" wind="偏东风 5-6级" />\n\n'
+            '<cheat_sheet title="珠海·斗门 今日天气概览">\n'
+            '| 指标 | 详情 | 说明 |\n'
+            '| :--- | :--- | :--- |\n'
+            '| **实时气温 / 体感** | **25°C / 22°C** | 偏东海风 5~6 级 |\n'
+            '| **降水概率** | 25% | 零星小雨 |\n'
+            '</cheat_sheet>\n\n'
+            '今天主要是阴天加吹大风，凉飕飕的很舒服～'
+        )
+        p = BubbleParser()
+        bubbles = p.feed(raw_msg) + p.finish()
+        image_bubbles = [b for b in bubbles if b.startswith("IMAGE:")]
+        self.assertEqual(len(image_bubbles), 1, f"Expected exactly 1 image bubble, got {len(image_bubbles)}")
+        self.assertIn("weather_", image_bubbles[0])
+        # Verify text chat bubble is preserved
+        text_bubbles = [b for b in bubbles if not b.startswith("IMAGE:")]
+        self.assertTrue(any("今天主要是阴天" in b for b in text_bubbles))
+
+    def test_bubble_parser_weather_duplicate_cheat_sheet_suppressed_streaming(self):
+        """Verify that streaming input with both <weather> and <cheat_sheet> suppresses the duplicate cheat sheet image and poll."""
+        chunks = [
+            '<weather location="珠海·斗门" condition="rainy" condition_text="阴天伴零星微雨" temp="25°" feel="22°C" />',
+            '\n\n<cheat_sheet title="珠海·斗门 今日天气概览">\n',
+            '| 指标 | 详情 |\n| :--- | :--- |\n| 实时气温 | 25°C |\n',
+            '</cheat_sheet>\n\n',
+            '今天主要是阴天加吹大风。',
+        ]
+        p = BubbleParser()
+        res = []
+        for c in chunks:
+            res.extend(p.feed(c))
+        res.extend(p.finish())
+
+        image_bubbles = [b for b in res if b.startswith("IMAGE:")]
+        poll_bubbles = [b for b in res if b.startswith("POLL:")]
+        self.assertEqual(len(image_bubbles), 1, f"Expected exactly 1 image bubble in stream, got {len(image_bubbles)}")
+        self.assertIn("weather_", image_bubbles[0])
+        self.assertEqual(len(poll_bubbles), 0, "No auto-poll should be emitted for suppressed weather cheat sheet")
+        self.assertTrue(any("今天主要是阴天" in b for b in res))
+
+    def test_bubble_parser_non_weather_cheat_sheet_preserved(self):
+        """Verify that a legitimate non-weather cheat_sheet (e.g. smartphone specs) is NOT suppressed."""
+        raw_msg = (
+            '<cheat_sheet title="旗舰手机参数对比">\n'
+            '| 品牌 | 芯片 | 屏幕 |\n'
+            '| :--- | :--- | :--- |\n'
+            '| Apple | A18 Pro | 6.3 OLED |\n'
+            '| Google | Tensor G4 | 6.3 OLED |\n'
+            '</cheat_sheet>\n\n'
+            '两款机型综合素质都非常出色。'
+        )
+        p = BubbleParser()
+        bubbles = p.feed(raw_msg) + p.finish()
+        image_bubbles = [b for b in bubbles if b.startswith("IMAGE:")]
+        self.assertEqual(len(image_bubbles), 1)
+        self.assertIn("sheet_", image_bubbles[0])
+
+
+    def test_bubble_parser_paragraph_fallback_after_visual_tag(self):
+        """Verify that multiple paragraphs following a visual tag are split into separate bubbles rather than dumped into a single block."""
+        raw_msg = (
+            '<movie title="末代皇帝" original_title="The Last Emperor" />\n\n'
+            '史诗级神作，任何对近代史感兴趣的人绝对必看。\n\n'
+            '贝托鲁奇镜头下的故宫没有现代横店的塑料感，光影、红墙都带着沉甸甸的历史苍凉感。\n\n'
+            '挑个悠闲的下午静下心来看最过瘾！'
+        )
+        p = BubbleParser()
+        bubbles = p.feed(raw_msg) + p.finish()
+
+        image_bubbles = [b for b in bubbles if b.startswith("IMAGE:")]
+        text_bubbles = [b for b in bubbles if not b.startswith("IMAGE:")]
+
+        self.assertEqual(len(image_bubbles), 1)
+        self.assertEqual(len(text_bubbles), 3, f"Expected 3 separate paragraph bubbles, got {len(text_bubbles)}: {text_bubbles}")
+        self.assertIn("史诗级神作", text_bubbles[0])
+        self.assertIn("贝托鲁奇镜头", text_bubbles[1])
+        self.assertIn("挑个悠闲的下午", text_bubbles[2])
+
+
+if __name__ == "__main__":
+
+    unittest.main()
 

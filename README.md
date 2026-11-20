@@ -1,4 +1,4 @@
-# Hermes Photon Deluxe
+# Hermes-iMessage-Photon-Deluxe
 
 An extension suite for Hermes Agent that enables discrete multi-bubble streaming and native iOS ecosystem parity over iMessage (via Photon).
 
@@ -8,7 +8,7 @@ An extension suite for Hermes Agent that enables discrete multi-bubble streaming
 
 Default chat agent integrations send whole-turn responses as a single monolithic block. On mobile platforms like Apple iMessage, this results in awkward delays followed by oversized walls of text.
 
-**Hermes Photon Deluxe** transforms this behavior into natural, human-paced messaging:
+**Hermes-iMessage-Photon-Deluxe** transforms this behavior into natural, human-paced messaging:
 
 1. **Discrete Multi-Bubble Streaming**: Delivers thoughts incrementally as short, individual message bubbles (`<bubble>...</bubble>`) with cognitive pacing.
 2. **Tool Heartbeats**: Automatically emits debounced, spoken status bubbles when tools (searches, code runs, file reads) take longer than 2.5 seconds.
@@ -55,7 +55,7 @@ Default chat agent integrations send whole-turn responses as a single monolithic
 ## Directory Structure
 
 ```text
-hermes-photon-deluxe/
+Hermes-iMessage-Photon-Deluxe/
 ├── gateway/
 │   ├── bubble_parser.py           # Multi-tag parser with paragraph fallback
 │   ├── bubble_queue.py            # 5-state lifecycle queue and pacing engine
@@ -81,7 +81,7 @@ hermes-photon-deluxe/
 
 ## Prerequisites
 
-Hermes Photon Deluxe upgrades the official Hermes Photon integration. You will need:
+Hermes-iMessage-Photon-Deluxe upgrades the official Hermes Photon integration. You will need:
 
 1. A working [Hermes Agent](https://github.com/NousResearch/hermes-agent) repository.
 2. iMessage paired via Photon:
@@ -120,7 +120,7 @@ python install.py --target /path/to/hermes-agent --uninstall
 
 ```bash
 cd /path/to/hermes-agent
-git apply /path/to/hermes-photon-deluxe/patches/hermes_all.patch
+git apply /path/to/Hermes-iMessage-Photon-Deluxe/patches/hermes_all.patch
 ```
 
 ---

@@ -19,7 +19,7 @@
 
 Hermes Agent 原生的 Photon 通道默认将整段响应一次性发送。在手机或 Mac 端使用 iMessage 时，单条长消息既缺少对话交互的即时反馈，也无法调用 iOS 系统的原生富文本卡片。
 
-AirHermes 是一个面向 Hermes Agent 的扩展套件，专为 iMessage (Photon) 运行环境设计。它将大模型回复切分为离散的短气泡，引入拟人化的打字节奏，并全面打通 iOS 原生生态协议——包括可点选的投票卡片、Apple 日历事件、Apple Maps 地标微缩图、网页富媒体展开、全屏动效与 Tapback 表态。
+AirHermes 是一个面向 Hermes Agent 的扩展套件，专为 iMessage (Photon) 运行环境设计。它将大模型回复切分为离散的短气泡，引入拟人化的打字节奏，并全面打通 iOS 原生生态协议 —— 包括可点选的投票卡片、Apple 日历事件、Apple Maps 地标微缩图、网页富媒体展开、全屏动效与 Tapback 表态。
 
 ---
 

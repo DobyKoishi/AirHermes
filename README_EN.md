@@ -1,41 +1,93 @@
 <div align="center">
 
-# 💬 AirHermes
-### Discrete Multi-Bubble Streaming & Native iOS Ecosystem Suite for Hermes Agent
+# AirHermes
+
+### Discrete bubble streaming and native iOS ecosystem integration for Hermes Agent on iMessage.
 
 [![Hermes Agent](https://img.shields.io/badge/Hermes-Agent-orange.svg?style=flat-square)](https://github.com/NousResearch/hermes-agent)
 [![Platform](https://img.shields.io/badge/Platform-iMessage%20(Photon)-blue.svg?style=flat-square)](https://photon.sh)
 [![Python](https://img.shields.io/badge/Python-3.10+-brightgreen.svg?style=flat-square)](https://python.org)
 [![License](https://img.shields.io/badge/License-MIT-green.svg?style=flat-square)](LICENSE)
-[![Tests](https://img.shields.io/badge/Tests-34%20Passed%20(100%25)-success.svg?style=flat-square)](tests/)
 
 <br />
 
-**[ [简体中文](README.md) ]** &nbsp;•&nbsp; **[ English ]**
-
-<br />
-
-> Say goodbye to robotic bots freezing for 15 seconds before dumping an overwhelming wall of text.  
-> Enjoy conversational pacing, instant feedback, and natural cognitive breathing room directly on iMessage.
+[简体中文](README.md) &nbsp;|&nbsp; **English**
 
 </div>
 
 ---
 
-## ⚡️ Why AirHermes? (Experience Comparison)
+Hermes Agent's built-in Photon transport delivers responses as monolithic messages. When interacting on iOS or macOS via iMessage, single walls of text provide no conversational pacing and cannot leverage Apple's native rich UI cards.
 
-| Dimension | Standard AI Chatbot 🤖 | AirHermes Experience 📱 |
-| :--- | :--- | :--- |
-| **First Response** | Freezes for 5–15 seconds during reasoning or tool calls | **Instant spoken reaction within 1s** (e.g. "Let me check that for you!") |
-| **Message Shape** | Monolithic essay dump with rigid bullet points | **Discrete short bubbles popping up progressively**, 1–2 sentences each |
-| **Long Tasks** | Appears frozen/unresponsive during web search or code exec | **Tool Heartbeats**: Automatically sends progress hints if a tool exceeds 2.5s |
-| **Emotional Feedback** | Text-only replies | **Semantic Tapbacks**: Reacts with ❤️, 👍, 👎, 😆, ‼️, ❓ (zero-text replies supported) |
-| **Native Rich Cards** | Plain text requiring manual copy-pasting | **Native iOS Cards**: 1-tap polls, `.ics` calendar events, `.vcf` contacts, Apple Maps |
-| **Visual Effects** | Flat static text | **Fullscreen iMessage Effects**: Confetti, fireworks, lasers, balloons, invisible ink |
+AirHermes is an extension suite for Hermes Agent designed specifically for the iMessage (Photon) platform. It splits LLM output into progressive discrete bubbles, introduces human typing cadences, and integrates native iOS features—interactive polls, Apple Calendar events, Apple Maps Unified Place cards with Retina snapshots, rich link previews, fullscreen screen effects, and semantic Tapbacks.
 
 ---
 
-## 📐 Architecture Flow
+## Showcase
+
+| Interactive Native Polls (`<poll>`) | Calendar Events & Apple Maps (`.ics` / `/place`) |
+| :---: | :---: |
+| <img src="assets/demo_poll.jpg" width="380" alt="iMessage Poll Demo" /> | <img src="assets/demo_calendar_maps.jpg" width="380" alt="Calendar and Maps Demo" /> |
+| **Rich Link Previews (LPLinkView) & Context Memory** | **Fullscreen Effects (Balloons) & Semantic Tapbacks** |
+| <img src="assets/demo_rich_link.jpg" width="380" alt="Rich Link Preview Demo" /> | <img src="assets/demo_screen_effects.jpg" width="380" alt="Screen Effects Demo" /> |
+
+---
+
+## Experience Comparison
+
+| Interaction | Default Behavior | AirHermes Enhancement |
+| :--- | :--- | :--- |
+| **First Response** | Freezes for seconds during reasoning or tool calls | Dispatches an immediate spoken acknowledgment within 1s ("Got it, checking now"), then streams progressively |
+| **Message Layout** | Single monolithic wall of text | Splits into natural 1–2 sentence bubbles, eliminating reading strain on mobile |
+| **Message Pacing** | Instant burst dumping all bubbles simultaneously | Adaptive pacing delay (300ms–600ms) proportional to bubble length to simulate natural typing |
+| **Scheduling** | Plain text requiring manual copy-pasting | Clean `.ics` native card with UTF-8 BOM; one tap adds directly to Apple Calendar |
+| **Location & Maps** | Plain text address or unrendered link | Apple Maps Unified Place URL (`/place`) with offline Retina map snapshot and 1-tap navigation |
+| **Quizzes & Polls** | Plain text multi-choice lists | Native iMessage interactive poll cards with real-time voter avatars and count updates |
+| **Expressive Reactions** | Standard text responses only | Native Tapback reactions (❤️, 👍, etc.) and context-aware fullscreen effects (balloons, fireworks, lasers) |
+
+---
+
+## Key Features
+
+- **Streaming Discrete Bubble Parser**  
+  Supports explicit `<bubble>` tags as well as intelligent paragraph fallback (`\n\n`) for untagged text. Maintains an internal state machine across bubble boundaries to keep Markdown code fences balanced and prevent tag leakage. Automatically handles CJK punctuation spacing.
+
+- **Adaptive Pacing Queue**  
+  Implements a 5-state lifecycle queue (`Queued` → `Sending` → `Sent`) with adaptive delays between consecutive bubbles. Includes network drop protection and late ACK reconciliation.
+
+- **Apple Maps Unified Place URLs (`/place`)**  
+  Generates standard Apple Maps unified place links (`/place?coordinate=...&name=...&map=explore`). iMessage natively renders high-DPI vector map tiles from coordinates, allowing users to start navigation in one tap. Built-in coordinate lookup table acts as an instant fallback when coordinates are omitted.
+
+- **Native Calendar Cards (`.ics`)**  
+  Generates RFC 5545 compliant `.ics` attachments without ugly random hashes. Encoded with UTF-8 BOM and explicit charset declarations to prevent mojibake across Apple platforms.
+
+- **Interactive Native Polls (`<poll>`)**  
+  Integrates directly with spectrum-ts at the transport layer, rendering native multi-option poll widgets directly inside the iMessage conversation stream.
+
+- **Fullscreen Screen Effects & Tapbacks**  
+  Enables the agent to trigger fullscreen celebrations (balloons, fireworks, confetti, lasers, spotlight) and bubble effects (invisible ink), along with zero-text standalone Tapbacks.
+
+---
+
+## XML Protocol Tag Reference
+
+You can output these lightweight semantic tags in system prompts or agent responses:
+
+| Tag | Description | Example |
+| :--- | :--- | :--- |
+| `<bubble>text</bubble>` | Discrete message bubble | `<bubble>Are we still on for dinner tonight?</bubble>` |
+| `<tapback>emoji</tapback>` | Native Apple Tapback reaction | `<tapback>❤️</tapback>` (supports ❤️ 👍 👎 😆 ‼️ ❓) |
+| `<poll title="...">` | Interactive native poll card | `<poll title="Where to?"><option>Beach</option><option>Cabin</option></poll>` |
+| `<calendar title="..." start="..." />` | Native Apple Calendar event | `<calendar title="Flight" start="2026-11-21 09:00" />` |
+| `<map name="..." coordinate="..." />` | Apple Maps place card | `<map name="Apple Park" coordinate="37.3348,-122.0090" address="1 Apple Park Way" />` |
+| `<contact name="..." phone="..." />` | Native vCard contact card (.vcf) | `<contact name="Alice" phone="+1234567890" />` |
+| `<effect type="...">text</effect>` | Fullscreen effect | `<effect type="balloons">Congratulations on the offer! 🎉</effect>` |
+| `<invisible>text</invisible>` | Invisible ink bubble effect | `<invisible>Tap to reveal</invisible>` |
+| `<action title="..." shortcut="..." />` | Deep link / Shortcuts trigger | `<action title="Log Expense" shortcut="QuickExpense" />` |
+
+---
+
+## Architecture Flow
 
 ```text
        LLM Incremental Delta Stream (Token stream)
@@ -43,9 +95,9 @@
                          ▼
 ┌──────────────────────────────────────────────────┐
 │                   BubbleParser                   │
-│   • Semantic XML tag parsing (<bubble>, <poll>)  │
+│   • Semantic XML tags (<bubble>, <poll>, <map>)  │
 │   • Cross-bubble Markdown code fence balancing   │
-│   • CJK delimiter spacing auto-normalization     │
+│   • Apple Maps Unified Place URL assembly        │
 │   • Plain text paragraph fallback splitting      │
 └────────────────────────┬─────────────────────────┘
                          │
@@ -53,8 +105,8 @@
 ┌──────────────────────────────────────────────────┐
 │              StreamingBubbleQueue                │
 │   • 5-State lifecycle tracking (Queued -> Sent)  │
-│   • 400ms human cognitive pacing (Pacer)         │
-│   • Late ACK reconciliation & circuit breaking   │
+│   • Length-based adaptive pacing delay           │
+│   • Late ACK reconciliation & network tolerance  │
 └────────────────────────┬─────────────────────────┘
                          │
                          ▼
@@ -65,109 +117,89 @@
 └────────────────────────┬─────────────────────────┘
                          │
                          ▼
-             User iPhone / Mac iMessage
+           User iPhone / iPad / Mac iMessage
 ```
 
 ---
 
-## 📁 Directory Structure
+## Installation & Setup
+
+### Prerequisites
+
+1. An existing installation of [Hermes Agent](https://github.com/NousResearch/hermes-agent).
+2. A configured Photon (iMessage) provider:
+   - Run `hermes photon setup` if configuring for the first time.
+   - If Photon is already connected and working, you can proceed directly.
+
+### Automated Installation
+
+```bash
+git clone https://github.com/<your-username>/AirHermes.git
+cd AirHermes
+
+# Automatically locates local Hermes Agent, backs up original files, and applies patches
+python install.py
+```
+
+Restart the Hermes gateway to apply changes:
+
+```bash
+hermes gateway restart
+```
+
+### Uninstallation
+
+To cleanly roll back Hermes Agent to its original unpatched state:
+
+```bash
+python install.py --uninstall
+hermes gateway restart
+```
+
+---
+
+## Directory Structure
 
 ```text
 AirHermes/
+├── assets/                        # Showcase demo screenshots
+│   ├── demo_poll.jpg
+│   ├── demo_calendar_maps.jpg
+│   ├── demo_rich_link.jpg
+│   └── demo_screen_effects.jpg
 ├── gateway/
-│   ├── bubble_parser.py           # Streaming delimiter parser with paragraph fallback
-│   ├── bubble_queue.py            # 5-state lifecycle queue and pacing engine
+│   ├── bubble_parser.py           # Multi-tag bubble parser with paragraph fallback
+│   ├── bubble_queue.py            # 5-state lifecycle queue with adaptive pacing
 │   └── bubble_stream_consumer.py  # Gateway streaming consumer bridge
 ├── plugins/platforms/photon/
-│   ├── adapter.py                 # Photon platform adapter with native iOS features
+│   ├── adapter.py                 # Photon adapter (effects, polls, tapbacks)
 │   └── sidecar/
-│       ├── index.mjs              # Sidecar with exponential backoff on inbound media
-│       ├── package.json
+│       ├── index.mjs              # Node sidecar with exponential backoff
 │       └── patch-spectrum-poll.mjs# spectrum-ts poll robustness patch
-├── patches/                       # Unified diffs for Hermes Agent core hooks
-│   ├── hermes_all.patch           # All-in-one patch
+├── patches/                       # Standard git patches for Hermes gateway
+│   ├── hermes_all.patch           # Consolidated single patch
 │   ├── run_turn.patch
 │   ├── run_turn_runner.patch
 │   └── session.patch
 ├── tests/
-│   └── test_photon_bubble_streaming.py  # Full 34-case automated test suite
-├── install.py                     # One-click installer / patch manager with auto-backup
-├── .gitignore
+│   └── test_photon_bubble_streaming.py  # Comprehensive automated test suite
+├── install.py                     # Installer, verifier, and uninstaller tool
 ├── README.md                      # Chinese Documentation (Default)
 └── README_EN.md                   # English Documentation
 ```
 
 ---
 
-## 📋 XML Protocol Tag Reference
+## Testing
 
-Output these lightweight tags in your agent's system prompt or tool responses:
-
-| XML Tag | Description | Example / Rendered Outcome |
-| :--- | :--- | :--- |
-| `<bubble>text</bubble>` | Individual discrete message bubble | `<bubble>On my way!</bubble>` |
-| `<tapback>emoji</tapback>` | Native Apple Tapback reaction | `<tapback>❤️</tapback>` (supports ❤️ 👍 👎 😆 ‼️ ❓) |
-| `<poll title="...">` | Interactive 1-tap poll card | `<poll title="Lunch?"><option>Sushi</option><option>Tacos</option></poll>` |
-| `<calendar title="..." start="..." />` | Native Apple Calendar event | `<calendar title="Flight" start="2026-11-21 09:00" />` (clean `.ics`) |
-| `<map name="..." coordinate="..." address="..." />` | Native Apple Maps Unified Place Card (with instant Retina snapshot) | `<map name="Apple Park" coordinate="37.3348,-122.0090" address="1 Apple Park Way" />` |
-| `<contact name="..." phone="..." />` | Native vCard contact card | `<contact name="Alice" phone="+1234567890" />` (clean `.vcf`) |
-| `<effect type="...">text</effect>` | Fullscreen iMessage effect | `<effect type="confetti">You passed! 🎉</effect>` |
-| `<invisible>text</invisible>` | Invisible ink bubble effect | `<invisible>Secret spoiler</invisible>` |
-| `<action title="..." shortcut="..." />` | iOS Shortcuts deep link | `<action title="Log Water" shortcut="Hydrate" />` |
-
----
-
-## 🛠 Prerequisites
-
-AirHermes builds upon Hermes Agent's official Photon integration:
-
-1. A working [Hermes Agent](https://github.com/NousResearch/hermes-agent) repository.
-2. An active iMessage Photon channel:
-   - **If you already use Photon**: simply run the installer below and start `hermes gateway`.
-   - **Fresh setup**: run `hermes photon setup` once to link your phone number / Apple ID.
-
----
-
-## 🚀 Quickstart & Installation
-
-### Option A: Using the Automated Installer (Recommended)
+Run the automated test suite to verify parser and protocol behaviors:
 
 ```bash
-# Clone this repository
-git clone https://github.com/<your-username>/AirHermes.git
-cd AirHermes
-
-# Auto-detects local Hermes and injects the suite (auto-backup included)
-python install.py
-
-# Start your gateway
-hermes gateway
-```
-
-> **Note**: To cleanly restore your Hermes installation back to stock at any time:
-> ```bash
-> python install.py --uninstall
-> ```
-
-### Option B: Using Git Patch
-
-```bash
-cd /path/to/hermes-agent
-git apply /path/to/AirHermes/patches/hermes_all.patch
+python -m unittest tests/test_photon_bubble_streaming.py
 ```
 
 ---
 
-## 🧪 Test Verification
+## License
 
-Run the comprehensive 34-case test suite to verify code fence balancing, pacing, and edge cases:
-
-```bash
-python -m unittest tests/gateway/test_photon_bubble_streaming.py
-```
-
----
-
-## 📄 License
-
-[MIT License](LICENSE)
+This project is licensed under the [MIT License](LICENSE).

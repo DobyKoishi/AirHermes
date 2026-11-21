@@ -119,8 +119,18 @@ def install(target_dir: Path) -> bool:
 
 def verify(target_dir: Path) -> bool:
     print(f"[*] Running test suite in: {target_dir}")
+    python_bin = sys.executable
+    for cand in [
+        target_dir / ".venv" / "Scripts" / "python.exe",
+        target_dir / ".venv" / "bin" / "python",
+        target_dir / "venv" / "Scripts" / "python.exe",
+        target_dir / "venv" / "bin" / "python",
+    ]:
+        if cand.exists():
+            python_bin = str(cand)
+            break
     res = subprocess.run(
-        [sys.executable, "-m", "unittest", "tests/gateway/test_photon_bubble_streaming.py"],
+        [python_bin, "-m", "unittest", "tests/gateway/test_photon_bubble_streaming.py"],
         cwd=target_dir,
     )
     return res.returncode == 0

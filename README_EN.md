@@ -19,7 +19,7 @@
 
 Hermes Agent's built-in Photon transport delivers responses as monolithic messages. When interacting on iOS or macOS via iMessage, single walls of text provide no conversational pacing and cannot leverage Apple's native rich UI cards.
 
-AirHermes is an extension suite for Hermes Agent designed specifically for the iMessage (Photon) platform. It splits LLM output into progressive discrete bubbles, introduces human typing cadences, and integrates native iOS features—interactive polls, Apple Calendar events, Apple Maps Unified Place cards with Retina snapshots, rich link previews, fullscreen screen effects, and semantic Tapbacks.
+AirHermes is an extension suite for Hermes Agent designed specifically for the iMessage (Photon) platform. It splits LLM output into progressive discrete bubbles, introduces human typing cadences, and integrates native iOS features like interactive polls, Apple Calendar events, Apple Maps Unified Place cards with Retina snapshots, rich link previews, fullscreen screen effects, and semantic Tapbacks.
 
 ---
 

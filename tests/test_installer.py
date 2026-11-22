@@ -7,6 +7,8 @@ journaling, rollback on failure, conflict detection, and safe uninstallation.
 
 from __future__ import annotations
 
+import io
+import json
 import os
 import shutil
 import sys
@@ -28,6 +30,7 @@ from install import (  # noqa: E402
     compute_sha256,
     doctor,
     resolve_safe_relpath,
+    safe_print,
 )
 
 
@@ -507,6 +510,140 @@ class TestTransactionalInstaller(BaseInstallerTestCase):
         uninstalled = installer.uninstall()
         self.assertTrue(uninstalled)
         self.assertFalse(deployed_config.exists(), "gateway/airhermes_config.py must be removed upon uninstall")
+
+
+class StrictEncodingStream(io.StringIO):
+    """Simulates a terminal output stream enforcing strict character encoding (e.g. cp1252)."""
+
+    def __init__(self, encoding: str = "cp1252"):
+        super().__init__()
+        self._encoding = encoding
+
+    @property
+    def encoding(self) -> str:
+        return self._encoding
+
+    def write(self, s: str) -> int:
+        s.encode(self._encoding, errors="strict")
+        return super().write(s)
+
+
+class TestRestrictedTerminalEncoding(BaseInstallerTestCase):
+    """Verifies installer and doctor execute safely without UnicodeEncodeError on restricted terminals (e.g. Windows cp1252)."""
+
+    def test_safe_print_fallback_on_unrepresentable_characters(self):
+        strict_stream = StrictEncodingStream("cp1252")
+        # cp1252 cannot encode \u2713 (checkmark) or CJK ideographs
+        safe_print("ASCII text: OK", file=strict_stream)
+        safe_print("Unicode symbol: \u2713 and CJK: 路径测试", file=strict_stream)
+        output = strict_stream.getvalue()
+        self.assertIn("ASCII text: OK", output)
+        self.assertIn(r"\u2713", output)
+
+    def test_doctor_under_strict_cp1252_stream(self):
+        strict_stream = StrictEncodingStream("cp1252")
+        with patch("sys.stdout", strict_stream):
+            code = doctor(self.mock_hermes)
+        self.assertEqual(code, 0)
+        output = strict_stream.getvalue()
+        self.assertIn("[OK] Hermes Agent core structure: OK", output)
+
+    @patch("subprocess.run")
+    def test_dry_run_under_strict_cp1252_stream(self, mock_subproc):
+        mock_subproc.return_value = MagicMock(returncode=0, stdout="", stderr="")
+        strict_stream = StrictEncodingStream("cp1252")
+        installer = TransactionalInstaller(target_dir=self.mock_hermes, source_root=ROOT)
+        with patch("sys.stdout", strict_stream):
+            success = installer.install(dry_run=True)
+        self.assertTrue(success)
+        output = strict_stream.getvalue()
+        self.assertIn("[OK] Dry run successful", output)
+
+    @patch("subprocess.run")
+    def test_unicode_non_ascii_target_path_under_strict_cp1252(self, mock_subproc):
+        mock_subproc.return_value = MagicMock(returncode=0, stdout="", stderr="")
+        # Create a mock Hermes installation inside a path containing Chinese characters
+        unicode_target = self.temp_root / "hermes_中文_测试目录"
+        shutil.copytree(self.mock_hermes, unicode_target)
+
+        strict_stream = StrictEncodingStream("cp1252")
+        with patch("sys.stdout", strict_stream):
+            code = doctor(unicode_target)
+            self.assertEqual(code, 0)
+            installer = TransactionalInstaller(target_dir=unicode_target, source_root=ROOT)
+            success = installer.install(dry_run=True)
+            self.assertTrue(success)
+
+
+class TestVersionConsistencyAndMigration(BaseInstallerTestCase):
+    """Verifies AirHermes version consistency and seamless upgrade from prior versions."""
+
+    def test_version_constant(self):
+        self.assertEqual(AIRHERMES_VERSION, "1.0.0-rc.2")
+
+    @patch("subprocess.run")
+    def test_fresh_installation_records_current_version(self, mock_subproc):
+        mock_subproc.return_value = MagicMock(returncode=0, stdout="", stderr="")
+        installer = TransactionalInstaller(target_dir=self.mock_hermes, source_root=ROOT)
+        self.assertTrue(installer.install())
+        manifest = InstallationManifest.load(self.mock_hermes)
+        self.assertIsNotNone(manifest)
+        self.assertEqual(manifest.version, "1.0.0-rc.2")
+
+    @patch("subprocess.run")
+    def test_upgrade_from_prior_version_0_1_0(self, mock_subproc):
+        mock_subproc.return_value = MagicMock(returncode=0, stdout="", stderr="")
+        installer = TransactionalInstaller(target_dir=self.mock_hermes, source_root=ROOT)
+        # Install initial version
+        self.assertTrue(installer.install())
+
+        # Simulate prior manifest having version="0.1.0"
+        manifest_path = self.mock_hermes / ".airhermes" / "manifest.json"
+        manifest_data = json.loads(manifest_path.read_text(encoding="utf-8"))
+        manifest_data["version"] = "0.1.0"
+        manifest_path.write_text(json.dumps(manifest_data), encoding="utf-8")
+
+        # Verify doctor sees v0.1.0
+        loaded_manifest = InstallationManifest.load(self.mock_hermes)
+        self.assertIsNotNone(loaded_manifest)
+        self.assertEqual(loaded_manifest.version, "0.1.0")
+
+        # Upgrade installation to 1.0.0-rc.2
+        self.assertTrue(installer.install())
+        upgraded_manifest = InstallationManifest.load(self.mock_hermes)
+        self.assertIsNotNone(upgraded_manifest)
+        self.assertEqual(upgraded_manifest.version, "1.0.0-rc.2")
+
+        # Verify original backup is preserved
+        backup_file = self.mock_hermes / ".airhermes/backup/gateway/run_turn.py"
+        self.assertEqual(self._read_file(backup_file), self.orig_run_turn_content)
+
+        # Verify clean uninstallation restores pre-AirHermes state
+        self.assertTrue(installer.uninstall())
+        self.assertEqual(self._read_file(self.mock_hermes / "gateway/run_turn.py"), self.orig_run_turn_content)
+        self.assertFalse((self.mock_hermes / "gateway" / "airhermes_config.py").exists())
+
+    @patch("subprocess.run")
+    def test_upgrade_from_prior_version_1_0_0_rc_1(self, mock_subproc):
+        mock_subproc.return_value = MagicMock(returncode=0, stdout="", stderr="")
+        installer = TransactionalInstaller(target_dir=self.mock_hermes, source_root=ROOT)
+        self.assertTrue(installer.install())
+
+        # Simulate prior manifest having version="1.0.0-rc.1"
+        manifest_path = self.mock_hermes / ".airhermes" / "manifest.json"
+        manifest_data = json.loads(manifest_path.read_text(encoding="utf-8"))
+        manifest_data["version"] = "1.0.0-rc.1"
+        manifest_path.write_text(json.dumps(manifest_data), encoding="utf-8")
+
+        # Upgrade installation to 1.0.0-rc.2
+        self.assertTrue(installer.install())
+        upgraded_manifest = InstallationManifest.load(self.mock_hermes)
+        self.assertIsNotNone(upgraded_manifest)
+        self.assertEqual(upgraded_manifest.version, "1.0.0-rc.2")
+
+        # Verify clean uninstallation
+        self.assertTrue(installer.uninstall())
+        self.assertEqual(self._read_file(self.mock_hermes / "gateway/run_turn.py"), self.orig_run_turn_content)
 
 
 if __name__ == "__main__":

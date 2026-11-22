@@ -20,15 +20,48 @@ import tempfile
 import time
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
-from typing import Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
-AIRHERMES_VERSION = "0.1.0"
+AIRHERMES_VERSION = "1.0.0-rc.2"
 MANIFEST_DIR = ".airhermes"
 MANIFEST_FILE = "manifest.json"
 BACKUP_DIR = "backup"
 LEGACY_BACKUP_DIR = ".deluxe_backup"
 
 ROOT = Path(__file__).resolve().parent
+
+
+# -----------------------------------------------------------------------------
+# Terminal Encoding Safety Helpers
+# -----------------------------------------------------------------------------
+
+def safe_print(*args: Any, sep: str = " ", end: str = "\n", file: Any = None, flush: bool = False) -> None:
+    """Print safely to output stream without raising UnicodeEncodeError under restricted terminal encodings (e.g. cp1252, ASCII)."""
+    target = file or sys.stdout
+    text = sep.join(str(a) for a in args) + end
+    try:
+        target.write(text)
+    except UnicodeEncodeError:
+        encoding = getattr(target, "encoding", None) or "utf-8"
+        safe_bytes = text.encode(encoding, errors="backslashreplace")
+        if hasattr(target, "buffer"):
+            if hasattr(target, "flush"):
+                try:
+                    target.flush()
+                except Exception:
+                    pass
+            target.buffer.write(safe_bytes)
+            if hasattr(target.buffer, "flush"):
+                try:
+                    target.buffer.flush()
+                except Exception:
+                    pass
+        else:
+            target.write(safe_bytes.decode(encoding, errors="replace"))
+    if flush and hasattr(target, "flush"):
+        target.flush()
+
+print = safe_print
 
 
 # -----------------------------------------------------------------------------
@@ -371,10 +404,10 @@ class TransactionalInstaller:
 
     def rollback(self, manifest: Optional[InstallationManifest] = None) -> bool:
         """Roll back all changes recorded in manifest to restore original state."""
-        print("[*] Initiating rollback to restore original state...")
+        print("[INFO] Initiating rollback to restore original state...")
         m = manifest or self.manifest or InstallationManifest.load(self.target_dir)
         if not m:
-            print("[!] No manifest available for rollback.")
+            print("[WARN] No manifest available for rollback.")
             return False
 
         # Mark rollback in-progress
@@ -399,7 +432,7 @@ class TransactionalInstaller:
                     atomic_copy(backup_file, target_file)
                     print(f"    [Rollback] Restored {safe_rel}")
             except Exception as e:
-                print(f"    [!] Failed restoring {rel_str}: {e}")
+                print(f"    [FAIL] Failed restoring {rel_str}: {e}")
                 success = False
 
         # 2. Delete created standalone files
@@ -411,7 +444,7 @@ class TransactionalInstaller:
                     target_file.unlink()
                     print(f"    [Rollback] Removed created file {safe_rel}")
             except Exception as e:
-                print(f"    [!] Failed removing {rel_str}: {e}")
+                print(f"    [FAIL] Failed removing {rel_str}: {e}")
                 success = False
 
         # Clean leftover temporary files
@@ -425,12 +458,12 @@ class TransactionalInstaller:
                 m.save(self.target_dir)
                 if self.manifest_dir.exists():
                     shutil.rmtree(self.manifest_dir, ignore_errors=True)
-                print("[+] Rollback completed.")
+                print("[OK] Rollback completed.")
             except Exception as e:
-                print(f"[!] Error cleaning manifest directory: {e}")
+                print(f"[WARN] Error cleaning manifest directory: {e}")
                 success = False
         else:
-            print("[!] Rollback incomplete due to errors. Manifest and backups preserved for manual recovery.")
+            print("[WARN] Rollback incomplete due to errors. Manifest and backups preserved for manual recovery.")
             try:
                 m.step = "rollback_failed"
                 m.save(self.target_dir)
@@ -441,39 +474,39 @@ class TransactionalInstaller:
 
     def install(self, dry_run: bool = False) -> bool:
         """Execute transactional installation with preflight validation."""
-        print(f"[*] Target Hermes root: {self.target_dir}")
+        print(f"[INFO] Target Hermes root: {self.target_dir}")
 
         # Check for corrupted manifest
         if InstallationManifest.has_corrupted_manifest(self.target_dir):
-            print("[!] Error: An existing manifest file was found at .airhermes/manifest.json, but it is corrupted.")
-            print("[!] Installation aborted to prevent data loss or overwriting unrecoverable backups.")
-            print("[*] Please inspect .airhermes/ or pass --uninstall --force if you wish to reset.")
+            print("[FAIL] Error: An existing manifest file was found at .airhermes/manifest.json, but it is corrupted.")
+            print("[FAIL] Installation aborted to prevent data loss or overwriting unrecoverable backups.")
+            print("[INFO] Please inspect .airhermes/ or pass --uninstall --force if you wish to reset.")
             return False
 
         # 0. Check for interrupted transaction from previous crash
         interrupted = self.detect_interrupted_transaction()
         if interrupted:
-            print(f"[!] Warning: An interrupted installation was detected (step: {interrupted.step}).")
-            print("[*] Automatically recovering prior state before proceeding...")
+            print(f"[WARN] Warning: An interrupted installation was detected (step: {interrupted.step}).")
+            print("[INFO] Automatically recovering prior state before proceeding...")
             self.rollback(interrupted)
 
         # 1. Structural preflight check
         struct_errors = PreflightValidator.validate_target_structure(self.target_dir)
         if struct_errors:
-            print("[!] Preflight structure validation failed:")
+            print("[FAIL] Preflight structure validation failed:")
             for err in struct_errors:
                 print(f"    - {err}")
             return False
 
         # 2. Staged sandbox validation (checks files, git apply, compilation)
-        print("[*] Running staged sandbox validation...")
+        print("[INFO] Running staged sandbox validation...")
         stage_ok, stage_errors = PreflightValidator.stage_and_validate(self.target_dir, self.source_root)
         if not stage_ok:
-            print("[!] Staged preflight validation failed. No target files were modified:")
+            print("[FAIL] Staged preflight validation failed. No target files were modified:")
             for err in stage_errors:
                 print(f"    - {err}")
             return False
-        print("[+] Staged sandbox validation passed.")
+        print("[OK] Staged sandbox validation passed.")
 
         # If dry run, print plan and exit cleanly without mutations
         if dry_run:
@@ -488,8 +521,8 @@ class TransactionalInstaller:
             print("  Patches to apply:")
             for patch_rel, target_rel in PreflightValidator.PATCH_FILES:
                 print(f"    - {patch_rel.name} -> {target_rel}")
-            print("\n[+] Dry run successful: File structure, patch applicability, and Python syntax checks passed.")
-            print("[*] Note: Dry run validates file and patch compatibility. Run '--doctor' or test in your environment to verify runtime packages and gateway execution.")
+            print("\n[OK] Dry run successful: File structure, patch applicability, and Python syntax checks passed.")
+            print("[INFO] Note: Dry run validates file and patch compatibility. Run '--doctor' or test in your environment to verify runtime packages and gateway execution.")
             return True
 
         # Existing committed manifest if any (e.g. repeated install / update)
@@ -605,38 +638,38 @@ class TransactionalInstaller:
             if (sidecar_dir / "node_modules").is_dir() and poll_patcher.is_file():
                 node_bin = shutil.which("node")
                 if node_bin:
-                    print("[*] Applying spectrum-ts poll patch to sidecar...")
+                    print("[INFO] Applying spectrum-ts poll patch to sidecar...")
                     subprocess.run([node_bin, "patch-spectrum-poll.mjs"], cwd=sidecar_dir, capture_output=True)
 
             # 3.5 Commit transaction
             self.manifest.state = "committed"
             self.manifest.step = "committed"
             self.manifest.save(self.target_dir)
-            print("\n[+] AirHermes installed successfully!")
-            print("[*] Note: If you haven't linked iMessage yet, run 'hermes photon setup'.")
-            print("[*] Launch your bot anytime with: hermes gateway")
+            print("\n[OK] AirHermes installed successfully!")
+            print("[INFO] Note: If you haven't linked iMessage yet, run 'hermes photon setup'.")
+            print("[INFO] Launch your bot anytime with: hermes gateway")
             return True
 
         except Exception as e:
-            print(f"\n[!] Installation failed with error: {e}")
+            print(f"\n[FAIL] Installation failed with error: {e}")
             self.rollback()
             return False
 
     def uninstall(self, force: bool = False) -> bool:
         """Safely uninstall AirHermes and restore original files."""
-        print(f"[*] Uninstalling AirHermes from: {self.target_dir}")
+        print(f"[INFO] Uninstalling AirHermes from: {self.target_dir}")
 
         if InstallationManifest.has_corrupted_manifest(self.target_dir):
-            print("[!] Error: Installation manifest is corrupted. Cannot safely determine files to restore/remove.")
+            print("[FAIL] Error: Installation manifest is corrupted. Cannot safely determine files to restore/remove.")
             if not force:
-                print("[*] Aborting uninstallation to protect files. Pass --force to attempt cleanup.")
+                print("[INFO] Aborting uninstallation to protect files. Pass --force to attempt cleanup.")
                 return False
 
         manifest = InstallationManifest.load(self.target_dir)
         legacy_backup = self.target_dir / LEGACY_BACKUP_DIR
 
         if not manifest and not legacy_backup.is_dir():
-            print(f"[!] No installation manifest or backup found at {self.target_dir}. Nothing to uninstall.")
+            print(f"[WARN] No installation manifest or backup found at {self.target_dir}. Nothing to uninstall.")
             return False
 
         success = True
@@ -660,17 +693,17 @@ class TransactionalInstaller:
                     conflicts.append((rel_str, target_file))
 
             if conflicts and not force:
-                print("[!] Conflict detected: The following files were modified by user after AirHermes installation:")
+                print("[WARN] Conflict detected: The following files were modified by user after AirHermes installation:")
                 for rel_str, _ in conflicts:
                     print(f"    - {rel_str}")
-                print("[*] Uninstallation aborted to protect your modifications. Pass --force to backup and overwrite user modifications.")
+                print("[INFO] Uninstallation aborted to protect your modifications. Pass --force to backup and overwrite user modifications.")
                 return False
 
             # If force is enabled, backup user's modified conflicting files before restoring
             if conflicts and force:
                 conflict_bak_dir = self.target_dir / ".airhermes_user_conflict_bak"
                 conflict_bak_dir.mkdir(parents=True, exist_ok=True)
-                print(f"[*] Backing up user-modified conflicting files to {conflict_bak_dir}...")
+                print(f"[INFO] Backing up user-modified conflicting files to {conflict_bak_dir}...")
                 for rel_str, target_file in conflicts:
                     try:
                         safe_rel = resolve_safe_relpath(Path(rel_str), self.target_dir)
@@ -681,8 +714,8 @@ class TransactionalInstaller:
                             dest_bak = dest_bak.with_name(f"{dest_bak.stem}.bak_{timestamp}{dest_bak.suffix}")
                         atomic_copy(target_file, dest_bak)
                     except Exception as e:
-                        print(f"[!] Failed to backup conflicting file {rel_str}: {e}")
-                        print("[!] Aborting uninstallation to protect user modifications.")
+                        print(f"[FAIL] Failed to backup conflicting file {rel_str}: {e}")
+                        print("[FAIL] Aborting uninstallation to protect user modifications.")
                         return False
 
             # 2. Restore modified files
@@ -699,10 +732,10 @@ class TransactionalInstaller:
                         atomic_copy(backup_file, target_file)
                         print(f"    Restored {safe_rel}")
                 except ValueError as e:
-                    print(f"    [!] Skipping unsafe path in manifest: {rel_str} ({e})")
+                    print(f"    [WARN] Skipping unsafe path in manifest: {rel_str} ({e})")
                     continue
                 except Exception as e:
-                    print(f"    [!] Error restoring {rel_str}: {e}")
+                    print(f"    [FAIL] Error restoring {rel_str}: {e}")
                     success = False
 
             # 3. Remove created standalone files
@@ -714,10 +747,10 @@ class TransactionalInstaller:
                         target_file.unlink()
                         print(f"    Removed {safe_rel}")
                 except ValueError as e:
-                    print(f"    [!] Skipping unsafe path in manifest: {rel_str} ({e})")
+                    print(f"    [WARN] Skipping unsafe path in manifest: {rel_str} ({e})")
                     continue
                 except Exception as e:
-                    print(f"    [!] Error removing {rel_str}: {e}")
+                    print(f"    [FAIL] Error removing {rel_str}: {e}")
                     success = False
 
             clean_stale_temps(self.target_dir)
@@ -725,11 +758,11 @@ class TransactionalInstaller:
             if success:
                 shutil.rmtree(self.manifest_dir, ignore_errors=True)
             else:
-                print("[!] Uninstallation encountered errors. Manifest and backups preserved.")
+                print("[WARN] Uninstallation encountered errors. Manifest and backups preserved.")
 
         # Mode B: Fallback for legacy .deluxe_backup
         elif legacy_backup.is_dir():
-            print("[*] Found legacy backup directory (.deluxe_backup), performing legacy restore...")
+            print("[INFO] Found legacy backup directory (.deluxe_backup), performing legacy restore...")
             for root, _, files in os.walk(legacy_backup):
                 for f in files:
                     full_src = Path(root) / f
@@ -747,7 +780,7 @@ class TransactionalInstaller:
                         atomic_copy(full_src, dest)
                         print(f"    Restored legacy {safe_rel}")
                     except Exception as e:
-                        print(f"    [!] Failed legacy restore for {rel_path}: {e}")
+                        print(f"    [FAIL] Failed legacy restore for {rel_path}: {e}")
                         success = False
 
             if success:
@@ -769,9 +802,9 @@ class TransactionalInstaller:
                 clean_stale_temps(self.target_dir)
                 shutil.rmtree(legacy_backup, ignore_errors=True)
             else:
-                print("[!] Legacy restore encountered errors. Preserving .deluxe_backup.")
+                print("[WARN] Legacy restore encountered errors. Preserving .deluxe_backup.")
 
-        print("\n[+] Uninstalled and reverted to pre-AirHermes state." if success else "\n[!] Uninstallation failed or incomplete.")
+        print("\n[OK] Uninstalled and reverted to pre-AirHermes state." if success else "\n[FAIL] Uninstallation failed or incomplete.")
         return success
 
 
@@ -790,38 +823,38 @@ def doctor(target_dir: Path) -> int:
 
     # 1. Target Directory & Hermes Core
     if not target_dir.is_dir():
-        print("  [x] Target directory does not exist.")
+        print("  [FAIL] Target directory does not exist.")
         return 1
     run_turn = target_dir / "gateway/run_turn.py"
     adapter = target_dir / "plugins/platforms/photon/adapter.py"
     if run_turn.is_file() and adapter.is_file():
-        print("  [✓] Hermes Agent core structure: OK")
+        print("  [OK] Hermes Agent core structure: OK")
     else:
-        print("  [x] Hermes Agent core structure: MISSING required files")
+        print("  [FAIL] Hermes Agent core structure: MISSING required files")
         has_errors = True
 
     # 2. Git & Node toolchains
     git_bin = PreflightValidator.check_git_executable()
     if git_bin:
-        print(f"  [✓] Git executable: {git_bin}")
+        print(f"  [OK] Git executable: {git_bin}")
     else:
-        print("  [x] Git executable: NOT FOUND (Required for patch validation)")
+        print("  [FAIL] Git executable: NOT FOUND (Required for patch validation)")
         has_errors = True
 
     node_bin = shutil.which("node")
     if node_bin:
-        print(f"  [✓] Node.js executable: {node_bin}")
+        print(f"  [OK] Node.js executable: {node_bin}")
     else:
-        print("  [!] Node.js executable: Not in PATH (Optional, needed for iMessage sidecar)")
+        print("  [WARN] Node.js executable: Not in PATH (Optional, needed for iMessage sidecar)")
 
     # 3. AirHermes Installation Status
     manifest = InstallationManifest.load(target_dir)
     legacy_backup = target_dir / LEGACY_BACKUP_DIR
     if InstallationManifest.has_corrupted_manifest(target_dir):
-        print("  [x] AirHermes Installation: Manifest file (.airhermes/manifest.json) is CORRUPTED.")
+        print("  [FAIL] AirHermes Installation: Manifest file (.airhermes/manifest.json) is CORRUPTED.")
         has_errors = True
     elif manifest:
-        print(f"  [✓] AirHermes Installation: Installed (v{manifest.version})")
+        print(f"  [OK] AirHermes Installation: Installed (v{manifest.version})")
         print(f"      Status: {manifest.state} (Step: {manifest.step})")
         # Verify file integrity
         corruptions = []
@@ -840,13 +873,13 @@ def doctor(target_dir: Path) -> int:
         else:
             print("      File Integrity: 100% Match with Manifest")
     elif legacy_backup.is_dir():
-        print("  [!] AirHermes Installation: Legacy installation (.deluxe_backup detected)")
+        print("  [WARN] AirHermes Installation: Legacy installation (.deluxe_backup detected)")
     else:
-        print("  [-] AirHermes Installation: Not installed")
+        print("  [INFO] AirHermes Installation: Not installed")
 
     # 4. Target Python Environment
     python_bin, venv_type = find_target_python(target_dir)
-    print(f"  [✓] Target Python runtime: {python_bin} ({venv_type})")
+    print(f"  [OK] Target Python runtime: {python_bin} ({venv_type})")
 
     print("=" * 60)
     if has_errors:
@@ -873,10 +906,10 @@ def verify(target_dir: Path) -> bool:
     """Run test suite in target directory."""
     test_file = target_dir / "tests/gateway/test_photon_bubble_streaming.py"
     if not test_file.is_file():
-        print(f"[!] Test file not found in target: {test_file}")
+        print(f"[FAIL] Test file not found in target: {test_file}")
         return False
 
-    print(f"[*] Running test suite in: {target_dir}")
+    print(f"[INFO] Running test suite in: {target_dir}")
     python_bin, _ = find_target_python(target_dir)
     env = os.environ.copy()
     cur_pypath = env.get("PYTHONPATH", "")
@@ -925,7 +958,7 @@ def main() -> None:
     args = parser.parse_args()
     target = args.target or find_default_hermes()
     if not target:
-        print("[!] Could not auto-detect hermes-agent directory. Please pass --target /path/to/hermes-agent")
+        print("[FAIL] Could not auto-detect hermes-agent directory. Please pass --target /path/to/hermes-agent")
         sys.exit(1)
 
     target = target.resolve()

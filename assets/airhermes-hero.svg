@@ -1,0 +1,229 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 800 310" width="100%" height="100%">
+  <defs>
+    <!-- Background subtle gradient -->
+    <linearGradient id="bgGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#0B0F19" />
+      <stop offset="100%" stop-color="#080B12" />
+    </linearGradient>
+
+    <!-- User blue bubble gradient -->
+    <linearGradient id="userGrad" x1="0%" y1="0%" x2="0%" y2="100%">
+      <stop offset="0%" stop-color="#0A84FF" />
+      <stop offset="100%" stop-color="#0066DB" />
+    </linearGradient>
+
+    <!-- Agent bubble gradient -->
+    <linearGradient id="agentGrad" x1="0%" y1="0%" x2="0%" y2="100%">
+      <stop offset="0%" stop-color="#1B2232" />
+      <stop offset="100%" stop-color="#141A26" />
+    </linearGradient>
+
+    <!-- Soft shadow filter -->
+    <filter id="softShadow" x="-5%" y="-10%" width="110%" height="130%">
+      <feDropShadow dx="0" dy="3" stdDeviation="5" flood-color="#000000" flood-opacity="0.30" />
+    </filter>
+
+    <style>
+      .font-sans {
+        font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", "Noto Sans", Helvetica, Arial, sans-serif;
+      }
+      .font-mono {
+        font-family: ui-monospace, "SF Mono", "JetBrains Mono", Menlo, Consolas, monospace;
+      }
+
+      /* 
+         Timeline (Total: 8.0s)
+         0.0s - 0.1s: Ready state
+         0.1s - 1.0s: Typing indicator active & pulsing
+         1.1s - 2.3s: Bubble 1 appears
+         2.4s - 3.6s: Bubble 2 appears
+         3.7s - 4.2s: Bubble 3 appears
+         4.2s: Tapback Heart pops in
+         4.2s - 7.1s: Complete conversation hold (2.9s reading time)
+         7.1s - 8.0s: Soft fade-out & smooth loop reset
+      */
+
+      @keyframes typingAnim {
+        0%, 100% { opacity: 0.35; transform: scale(0.85); }
+        50% { opacity: 1; transform: scale(1.15); }
+      }
+
+      @keyframes typingBubble {
+        0% { opacity: 0; transform: translateY(6px); }
+        1.5% { opacity: 1; transform: translateY(0); }
+        11.5% { opacity: 1; transform: translateY(0); }
+        13.5% { opacity: 0; transform: translateY(-4px); }
+        100% { opacity: 0; }
+      }
+
+      @keyframes bubble1Anim {
+        0%, 12.5% { opacity: 0; transform: translateY(8px); }
+        15% { opacity: 1; transform: translateY(0); }
+        88.5% { opacity: 1; transform: translateY(0); }
+        94%, 100% { opacity: 0; transform: translateY(-4px); }
+      }
+
+      @keyframes bubble2Anim {
+        0%, 28% { opacity: 0; transform: translateY(8px); }
+        30.5% { opacity: 1; transform: translateY(0); }
+        88.5% { opacity: 1; transform: translateY(0); }
+        94%, 100% { opacity: 0; transform: translateY(-4px); }
+      }
+
+      @keyframes bubble3Anim {
+        0%, 44% { opacity: 0; transform: translateY(8px); }
+        46.5% { opacity: 1; transform: translateY(0); }
+        88.5% { opacity: 1; transform: translateY(0); }
+        94%, 100% { opacity: 0; transform: translateY(-4px); }
+      }
+
+      @keyframes tapbackAnim {
+        0%, 51% { opacity: 0; transform: translate(368px, 216px) scale(0); }
+        53.5% { opacity: 1; transform: translate(368px, 216px) scale(1.18); }
+        55.5% { opacity: 1; transform: translate(368px, 216px) scale(1.0); }
+        88.5% { opacity: 1; transform: translate(368px, 216px) scale(1.0); }
+        94%, 100% { opacity: 0; transform: translate(368px, 216px) scale(0.8); }
+      }
+
+      @keyframes statusPulse {
+        0%, 100% { opacity: 0.6; }
+        50% { opacity: 1; }
+      }
+
+      .dot-1 { animation: typingAnim 0.75s infinite ease-in-out 0s; transform-origin: 52px 128px; }
+      .dot-2 { animation: typingAnim 0.75s infinite ease-in-out 0.2s; transform-origin: 66px 128px; }
+      .dot-3 { animation: typingAnim 0.75s infinite ease-in-out 0.4s; transform-origin: 80px 128px; }
+
+      .anim-typing { animation: typingBubble 8s infinite cubic-bezier(0.16, 1, 0.3, 1); }
+      .anim-bubble-1 { animation: bubble1Anim 8s infinite cubic-bezier(0.16, 1, 0.3, 1); }
+      .anim-bubble-2 { animation: bubble2Anim 8s infinite cubic-bezier(0.16, 1, 0.3, 1); }
+      .anim-bubble-3 { animation: bubble3Anim 8s infinite cubic-bezier(0.16, 1, 0.3, 1); }
+      .anim-tapback { animation: tapbackAnim 8s infinite cubic-bezier(0.34, 1.56, 0.64, 1); }
+      .pulse-dot { animation: statusPulse 2s infinite ease-in-out; }
+    </style>
+  </defs>
+
+  <!-- Outer Canvas Frame -->
+  <rect x="1" y="1" width="798" height="308" rx="14" fill="url(#bgGrad)" stroke="#1F283D" stroke-width="1.5" />
+
+  <!-- Subtle Top Ambient Glow -->
+  <ellipse cx="400" cy="0" rx="320" ry="100" fill="#0A84FF" opacity="0.04" />
+
+  <!-- ==================== HEADER BAR ==================== -->
+  <line x1="1" y1="46" x2="799" y2="46" stroke="#161E30" stroke-width="1" />
+
+  <!-- Agent Avatar & Identity -->
+  <circle cx="34" cy="23" r="13" fill="#1A2338" stroke="#283654" stroke-width="1" />
+  <text x="34" y="27.5" text-anchor="middle" class="font-sans" font-size="12" font-weight="600" fill="#64D2FF">H</text>
+
+  <text x="56" y="22" class="font-sans" font-size="13.5" font-weight="600" fill="#F0F6FC">Hermes Agent</text>
+  <circle cx="152" cy="18.5" r="3.5" fill="#30D158" class="pulse-dot" />
+  <text x="161" y="22" class="font-mono" font-size="11" fill="#30D158">online</text>
+
+  <text x="56" y="36.5" class="font-sans" font-size="10.5" fill="#64748B">iMessage via Photon Adapter</text>
+
+  <!-- Top Right Mode Badge -->
+  <rect x="632" y="12" width="136" height="22" rx="6" fill="#101726" stroke="#1E2B44" stroke-width="1" />
+  <circle cx="645" cy="23" r="3" fill="#0A84FF" />
+  <text x="654" y="26.5" class="font-mono" font-size="10" font-weight="500" fill="#79B8FF">DISCRETE STREAMING</text>
+
+
+  <!-- ==================== CONVERSATION THREAD ==================== -->
+
+  <!-- User Inbound Message (Right-aligned, static anchor with generous padding) -->
+  <g filter="url(#softShadow)">
+    <path d="M 374 60 
+             L 752 60 
+             A 16 16 0 0 1 768 76 
+             L 768 82 
+             A 16 16 0 0 1 752 98 
+             L 390 98 
+             A 16 16 0 0 1 374 82 
+             Z" 
+          fill="url(#userGrad)" />
+    <text x="392" y="84" class="font-sans" font-size="13.5" font-weight="400" fill="#FFFFFF" letter-spacing="-0.1">
+      Can you break down our afternoon sync and lunch spot?
+    </text>
+  </g>
+
+
+  <!-- Typing Indicator (Appears before Bubble 1) -->
+  <g class="anim-typing" filter="url(#softShadow)">
+    <rect x="32" y="110" width="68" height="34" rx="17" fill="url(#agentGrad)" stroke="#283654" stroke-width="1.2" />
+    <circle cx="52" cy="127" r="3.5" fill="#94A3B8" class="dot-1" />
+    <circle cx="66" cy="127" r="3.5" fill="#94A3B8" class="dot-2" />
+    <circle cx="80" cy="127" r="3.5" fill="#94A3B8" class="dot-3" />
+  </g>
+
+
+  <!-- Bubble 1: First discrete message -->
+  <g class="anim-bubble-1" filter="url(#softShadow)">
+    <path d="M 32 110 
+             L 366 110 
+             A 16 16 0 0 1 382 126 
+             L 382 132 
+             A 16 16 0 0 1 366 148 
+             L 48 148 
+             A 16 16 0 0 1 32 132 
+             Z" 
+          fill="url(#agentGrad)" stroke="#232E47" stroke-width="1" />
+    <text x="48" y="134" class="font-sans" font-size="13.5" font-weight="400" fill="#F0F6FC">
+      Team sync is confirmed for 2:30 PM in Studio B.
+    </text>
+  </g>
+
+
+  <!-- Bubble 2: Second discrete message -->
+  <g class="anim-bubble-2" filter="url(#softShadow)">
+    <path d="M 32 158 
+             L 374 158 
+             A 16 16 0 0 1 390 174 
+             L 390 180 
+             A 16 16 0 0 1 374 196 
+             L 48 196 
+             A 16 16 0 0 1 32 180 
+             Z" 
+          fill="url(#agentGrad)" stroke="#232E47" stroke-width="1" />
+    <text x="48" y="182" class="font-sans" font-size="13.5" font-weight="400" fill="#F0F6FC">
+      Table reserved at Blue Bottle Cafe for 12:15 PM.
+    </text>
+  </g>
+
+
+  <!-- Bubble 3: Third discrete message + attachment hint -->
+  <g class="anim-bubble-3" filter="url(#softShadow)">
+    <path d="M 32 206 
+             L 366 206 
+             A 16 16 0 0 1 382 222 
+             L 382 228 
+             A 16 16 0 0 1 366 244 
+             L 48 244 
+             A 16 16 0 0 1 32 228 
+             Z" 
+          fill="url(#agentGrad)" stroke="#232E47" stroke-width="1" />
+    <text x="48" y="230" class="font-sans" font-size="13.5" font-weight="400" fill="#F0F6FC">
+      Calendar invites updated. See you there!
+    </text>
+  </g>
+
+  <!-- Tapback Heart Reaction Attached to Bubble 3 -->
+  <g class="anim-tapback">
+    <circle cx="10" cy="10" r="11" fill="#161F32" stroke="#FF375F" stroke-width="1.2" />
+    <path d="M 6.5 8.5 A 2.2 2.2 0 0 1 10 7.2 A 2.2 2.2 0 0 1 13.5 8.5 Q 13.5 11.5 10 13.5 Q 6.5 11.5 6.5 8.5 Z" fill="#FF375F" />
+  </g>
+
+
+  <!-- ==================== FOOTER TELEMETRY ==================== -->
+  <line x1="1" y1="268" x2="799" y2="268" stroke="#161E30" stroke-width="1" />
+
+  <!-- Left: Technical Telemetry Indicators (Accurate, meaningful, non-misleading) -->
+  <text x="32" y="291" class="font-mono" font-size="10.5" fill="#64748B">
+    DISCRETE CADENCE: ~850ms PACING &#x2022; NATIVE TAPBACK &#x2022; RFC 5545 SYNC
+  </text>
+
+  <!-- Right: Value Proposition -->
+  <text x="768" y="291" text-anchor="end" class="font-sans" font-size="11" font-weight="500" fill="#94A3B8">
+    Conversations, not text walls.
+  </text>
+
+</svg>

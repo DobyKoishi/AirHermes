@@ -1,0 +1,70 @@
+name: Upstream Hermes Integration (Optional)
+
+on:
+  workflow_dispatch:
+    inputs:
+      hermes_repo:
+        description: "Upstream Hermes repository to test against"
+        required: true
+        default: "NousResearch/hermes-agent"
+      hermes_ref:
+        description: "Branch or commit ref of upstream Hermes"
+        required: true
+        default: "main"
+
+permissions:
+  contents: read
+
+jobs:
+  integration-test:
+    name: Upstream Hermes Integration Test
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout AirHermes
+        uses: actions/checkout@v4
+        with:
+          path: airhermes
+
+      - name: Checkout Upstream Hermes Agent
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ inputs.hermes_repo }}
+          ref: ${{ inputs.hermes_ref }}
+          path: hermes-agent
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install uv Package Manager
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install uv
+
+      - name: Set up Hermes Dependencies
+        working-directory: hermes-agent
+        run: |
+          uv venv
+          uv pip install -e .
+
+      - name: Run AirHermes Preflight Doctor & Dry-Run
+        working-directory: airhermes
+        run: |
+          python install.py --doctor --target ../hermes-agent
+          python install.py --dry-run --target ../hermes-agent
+
+      - name: Install AirHermes into Hermes Agent Target
+        working-directory: airhermes
+        run: |
+          python install.py --target ../hermes-agent
+
+      - name: Run Full 45-Test Integration Suite
+        working-directory: airhermes
+        run: |
+          python install.py --verify --target ../hermes-agent
+
+      - name: Test Safe Uninstallation and Rollback
+        working-directory: airhermes
+        run: |
+          python install.py --uninstall --target ../hermes-agent

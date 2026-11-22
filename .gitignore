@@ -32,5 +32,10 @@ npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
 .deluxe_backup/
+.airhermes/
+.ruff_cache/
+tests/local/
+personal/
+.private/
 .DS_Store
 Thumbs.db

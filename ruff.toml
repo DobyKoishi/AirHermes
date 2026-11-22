@@ -1,0 +1,16 @@
+# AirHermes Ruff Configuration
+target-version = "py311"
+line-length = 120
+
+[lint]
+select = ["E", "F", "W"]
+ignore = [
+    "E501",  # Line length (long regexes, URLs, and prompt strings allowed)
+    "E741",  # Allow single-letter loop variables like `l` for line
+]
+
+[lint.per-file-ignores]
+# Preserve existing imports in production streaming/adapter modules until Phase 3 lifecycle hardening
+"gateway/*" = ["F401"]
+"plugins/*" = ["F401"]
+"tests/*" = ["E402"]

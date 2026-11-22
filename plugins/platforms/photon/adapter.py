@@ -18,6 +18,7 @@ import signal
 import subprocess
 import sys
 import time
+import uuid
 from datetime import datetime, timezone, UTC
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, AsyncIterator, Callable, Dict, List, Optional, Tuple
@@ -106,6 +107,76 @@ async def _aiter_ndjson_lines(response: Any) -> AsyncIterator[str]:
 def _runtime_record_path() -> Path:
     from hermes_constants import get_hermes_home  # honors profile overrides
     return get_hermes_home() / _RUNTIME_RECORD_NAME
+
+
+def _format_port_conflict_diagnostic(
+    port: int,
+    bind: str = "127.0.0.1",
+    holding_pid: Optional[int] = None,
+    process_name: Optional[str] = None,
+    is_our_sidecar: bool = False,
+) -> str:
+    """Format safe, human-readable diagnostics for port conflicts on Windows/POSIX without leaking credentials."""
+    proc_info = f" (PID {holding_pid}, {process_name})" if holding_pid and process_name else (f" (PID {holding_pid})" if holding_pid else "")
+    lines = [
+        f"Photon Sidecar port {port} on {bind} is already occupied by another process{proc_info}.",
+    ]
+    if holding_pid:
+        lines.append("To inspect or terminate the conflicting process manually, run:")
+        lines.append(f"  taskkill /PID {holding_pid} /F")
+    lines.append("Alternatively, configure a different port using environment variable:")
+    lines.append("  set PHOTON_SIDECAR_PORT=<available_port>")
+    if not is_our_sidecar:
+        lines.append("Automatic termination was refused because the process ownership could not be verified.")
+    return "\n".join(lines)
+
+
+def _can_safely_terminate_listener(pid: int, is_our_sidecar: bool) -> bool:
+    """Refuse automatic termination of unverified foreign processes holding the port."""
+    if not is_our_sidecar or pid <= 0:
+        return False
+    return True
+
+
+def _get_port_listener_info_windows(port: int) -> tuple[Optional[int], Optional[str]]:
+    """Inspect port listener on Windows via netstat without third-party dependencies."""
+    if sys.platform != "win32":
+        return None, None
+    try:
+        out = subprocess.check_output(
+            ["netstat", "-ano", "-p", "tcp"],
+            stdin=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=3.0,
+        )
+        for line in out.splitlines():
+            line = line.strip()
+            if "LISTENING" in line and f":{port}" in line:
+                parts = line.split()
+                if len(parts) >= 5 and parts[-1].isdigit():
+                    pid = int(parts[-1])
+                    proc_name = None
+                    try:
+                        tl_out = subprocess.check_output(
+                            ["tasklist", "/FI", f"PID eq {pid}", "/FO", "CSV", "/NH"],
+                            stdin=subprocess.DEVNULL,
+                            stderr=subprocess.DEVNULL,
+                            text=True,
+                            encoding="utf-8",
+                            errors="replace",
+                            timeout=3.0,
+                        )
+                        if tl_out.strip():
+                            proc_name = tl_out.strip().split(",")[0].strip('"')
+                    except Exception:
+                        pass
+                    return pid, proc_name
+    except Exception:
+        pass
+    return None, None
 
 
 def _legacy_runtime_record_path() -> Path:
@@ -610,6 +681,9 @@ class PhotonAdapter(BasePlatformAdapter):
     def __init__(self, config: PlatformConfig):
         super().__init__(config, Platform("photon"))
         extra = config.extra or {}
+        from gateway.airhermes_config import AirHermesConfig
+        self.airhermes_config = AirHermesConfig.from_platform_config(config)
+        self.SUPPORTS_BUBBLE_STREAMING = self.airhermes_config.bubble_streaming
         # Project credentials: env wins, then config.extra, then auth.json.
         stored_id, stored_sec = load_project_credentials()
         self._project_id: str = _get_scoped_secret("PHOTON_PROJECT_ID") or extra.get("project_id") or stored_id or ""
@@ -1123,8 +1197,20 @@ class PhotonAdapter(BasePlatformAdapter):
             while time.time() < deadline:
                 if self._sidecar_proc.poll() is not None:
                     _delete_runtime_record()
+                    holding_pid, proc_name = None, None
+                    if sys.platform == "win32":
+                        holding_pid, proc_name = _get_port_listener_info_windows(self._sidecar_port)
+                    diag_suffix = ""
+                    if holding_pid:
+                        diag_suffix = "\n" + _format_port_conflict_diagnostic(
+                            port=self._sidecar_port,
+                            bind=self._sidecar_bind,
+                            holding_pid=holding_pid,
+                            process_name=proc_name,
+                            is_our_sidecar=False,
+                        )
                     raise RuntimeError(
-                        f"Photon sidecar exited with code {self._sidecar_proc.returncode} before becoming ready")
+                        f"Photon sidecar exited with code {self._sidecar_proc.returncode} before becoming ready.{diag_suffix}")
                 try:
                     resp = await client.post(self._sidecar_url("/healthz"), headers=self._sidecar_headers())
                     if resp.status_code == 200:  # let out-of-process senders (cron) reach this sidecar
@@ -1326,61 +1412,60 @@ class PhotonAdapter(BasePlatformAdapter):
             logger.warning("[photon] failed to dispatch IMAGE bubble: %s", e, exc_info=True)
         return SendResult(success=True)
 
-    async def _dispatch_single_bubble(self, chat_id: str, b: str) -> SendResult:
-        """Dispatch a single structured or plain bubble to Photon sidecar."""
-        if b.startswith("IMAGE:"):
-            return await self._dispatch_image_bubble(chat_id, b)
+    async def _dispatch_single_bubble(self, chat_id: str, b: Any) -> SendResult:
+        """Dispatch a single structured action or plain bubble to Photon sidecar."""
+        from gateway.bubble_actions import (
+            EffectAction,
+            FileAttachmentAction,
+            ImageAttachmentAction,
+            PollAction,
+            TapbackAction,
+            TextBubble,
+        )
 
-        elif b.startswith("FILE:"):
-            file_path = b[len("FILE:"):].strip()
-            file_exists = await asyncio.to_thread(os.path.exists, file_path)
-            if hasattr(self, "send_document") and file_exists:
-                logger.info("[photon] Delivering document %s to %s", file_path, chat_id)
-                try:
-                    file_name = os.path.basename(file_path)
-                    res = await self.send_document(chat_id, file_path, file_name=file_name)
-                except TypeError:
-                    res = await self.send_document(chat_id, file_path)
-                if not res.success:
-                    return res
-                await asyncio.sleep(0.400)
-                return res
+        if isinstance(b, TapbackAction):
+            return SendResult(success=True)
 
-        elif b.startswith("POLL:"):
+        if isinstance(b, PollAction):
             try:
-                data = json.loads(b[len("POLL:"):])
-                title = data.get("title") or "请选择"
-                options = data.get("options") or []
                 if hasattr(self, "_sidecar_send_poll"):
-                    res = await self._sidecar_send_poll(chat_id, title, options)
+                    res = await self._sidecar_send_poll(chat_id, b.title, list(b.options))
                     if not res.success:
                         return res
                     await asyncio.sleep(0.400)
                     return res
             except Exception as e:  # health: allow BLE001 -- sidecar poll payload parsing error
                 logger.warning("[photon] failed to dispatch POLL bubble: %s", e, exc_info=True)
+            return SendResult(success=True)
 
-        elif b.startswith("EFFECT:"):
+        if isinstance(b, EffectAction):
             try:
-                data = json.loads(b[len("EFFECT:"):])
-                eff = data.get("effect") or "confetti"
-                eff_text = data.get("text") or ""
                 if hasattr(self, "_sidecar_send_effect"):
-                    res = await self._sidecar_send_effect(chat_id, eff_text, eff)
+                    res = await self._sidecar_send_effect(chat_id, b.content, b.effect_type)
                     if not res.success:
                         return res
                     await asyncio.sleep(0.400)
                     return res
             except Exception as e:  # health: allow BLE001 -- sidecar effect payload parsing error
                 logger.warning("[photon] failed to dispatch EFFECT bubble: %s", e, exc_info=True)
+            b = b.content
 
-        res = await self._sidecar_send(chat_id, b)
+        if isinstance(b, FileAttachmentAction):
+            return await self.send_document(chat_id, b.staged_path, file_name=b.file_name, caption=b.caption)
+
+        if isinstance(b, ImageAttachmentAction):
+            return await self.send_image_file(chat_id, b.staged_path, caption=b.caption)
+
+        if isinstance(b, TextBubble):
+            b = b.content
+
+        res = await self._sidecar_send(chat_id, str(b))
         if not res.success:
             return res
         await asyncio.sleep(0.400)
         return res
 
-    async def _dispatch_bubbles_sequential(self, chat_id: str, bubbles: list[str]) -> SendResult:
+    async def _dispatch_bubbles_sequential(self, chat_id: str, bubbles: list[Any]) -> SendResult:
         last_res = SendResult(success=True)
         for b in bubbles:
             last_res = await self._dispatch_single_bubble(chat_id, b)
@@ -1388,26 +1473,37 @@ class PhotonAdapter(BasePlatformAdapter):
                 return last_res
         return last_res
 
+    async def send_raw_text(self, chat_id: str, content: str, reply_to: Optional[str] = None,
+                          metadata: Optional[dict[str, Any]] = None) -> SendResult:
+        """Deliver plain text directly to sidecar without parsing or control marker triggers."""
+        if not content or not content.strip():
+            return SendResult(success=True)
+        return await self._sidecar_send(chat_id, content.strip())
+
     async def send(self, chat_id: str, content: str, reply_to: Optional[str] = None,
                    metadata: Optional[dict[str, Any]] = None) -> SendResult:
         formatted = self.format_message(content)
         if not formatted or not formatted.strip():
-            return SendResult(success=True)
+            if content and content.strip():
+                formatted = content.strip()
+            else:
+                return SendResult(success=True)
 
-        _PARSE_TRIGGERS = (
-            "<bubble>", "<<<bubble>>>", "<weather", "<forecast",
-            "<cheat_sheet", "<visual_table", "<sheet",
-            "<movie", "<film", "<tv", "<drama",
-            "<word", "<dict", "<dictionary", "<lexicon",
+        _PARSE_TRIGGERS = [
+            "<bubble>", "<<<bubble>>>",
             "<image", "<img", "<photo", "<media", "<meme",
-            "<tapback", "<reaction", "<poll", "<effect",
             "<calendar", "<map", "<contact", "<action",
-            "MEDIA:", "IMAGE:", "FILE:",
-        )
+            "<effect", "<spoiler", "<poll", "<tapback", "<reaction",
+        ]
+        from gateway.bubble_parser import BubbleParser
+        if BubbleParser._custom_action_handlers:
+            for c_name in BubbleParser._custom_action_handlers:
+                _PARSE_TRIGGERS.append(f"<{c_name}")
+
         if any(tag in formatted for tag in _PARSE_TRIGGERS):
-            from gateway.bubble_parser import BubbleParser
+            from gateway.bubble_actions import TapbackAction
             parser = BubbleParser(paragraph_fallback=False)
-            bubbles = [b for b in (parser.feed(formatted) + parser.finish()) if not b.startswith("TAPBACK:")]
+            bubbles = [b for b in (parser.feed_actions(formatted) + parser.finish_actions()) if not isinstance(b, TapbackAction)]
             if bubbles:
                 return await self._dispatch_bubbles_sequential(chat_id, bubbles)
 
@@ -1442,25 +1538,78 @@ class PhotonAdapter(BasePlatformAdapter):
             return await super().send_image(chat_id, image_url, caption, reply_to)
         return await self._sidecar_send_attachment(chat_id, local_path, caption=caption)
 
+    async def _authorize_and_dispatch_attachment(
+        self,
+        chat_id: str,
+        path: str,
+        *,
+        name: Optional[str] = None,
+        caption: Optional[str] = None,
+        kind: str = "attachment",
+        metadata: Optional[dict[str, Any]] = None,
+    ) -> SendResult:
+        from gateway.attachment_registry import registry
+        turn_id = (metadata or {}).get("turn_id")
+
+        # 1. Check if path or token is already authorized and verified in registry
+        ok, reason, record = registry.verify_for_delivery(chat_id, str(path), turn_id=turn_id)
+        if not ok or not record:
+            logger.warning("[photon] Attachment dispatch rejected for %s in chat %s: %s", path, chat_id, reason)
+            return SendResult(success=False, error=f"Attachment not authorized: {reason}")
+
+        # 2. Dispatch the verified staged copy to sidecar
+        in_native_dispatch = False
+        try:
+            registry.mark_dispatching(record.token)
+            in_native_dispatch = True
+            res = await self._sidecar_send_attachment(
+                chat_id,
+                record.staged_path,
+                name=name or record.file_name,
+                caption=caption or record.caption,
+                kind=kind,
+            )
+            registry.record_delivery_result(record.token, getattr(res, "success", True))
+            return res
+        except asyncio.CancelledError:
+            registry.mark_cancelled(record.token, in_native_dispatch=in_native_dispatch)
+            logger.warning(
+                "[photon] Attachment dispatch cancelled (in_native_dispatch=%s) for %s",
+                in_native_dispatch, record.token,
+            )
+            raise
+        except Exception as e:
+            registry.record_delivery_result(record.token, False)
+            logger.error("[photon] Attachment dispatch failed for %s: %s", record.token, e)
+            return SendResult(success=False, error=f"Attachment dispatch failed: {e}")
+
     async def send_image_file(self, chat_id: str, image_path: str, caption: Optional[str] = None,
                               reply_to: Optional[str] = None, metadata: Optional[dict[str, Any]] = None,
                               **kwargs) -> SendResult:
-        return await self._sidecar_send_attachment(chat_id, image_path, caption=caption)
+        return await self._authorize_and_dispatch_attachment(
+            chat_id, image_path, caption=caption, kind="image", metadata=metadata,
+        )
 
     async def send_voice(self, chat_id: str, audio_path: str, caption: Optional[str] = None,
                          reply_to: Optional[str] = None, metadata: Optional[dict[str, Any]] = None,
                          **kwargs) -> SendResult:
-        return await self._sidecar_send_attachment(chat_id, audio_path, caption=caption, kind="voice")
+        return await self._authorize_and_dispatch_attachment(
+            chat_id, audio_path, caption=caption, kind="voice", metadata=metadata,
+        )
 
     async def send_video(self, chat_id: str, video_path: str, caption: Optional[str] = None,
                          reply_to: Optional[str] = None, metadata: Optional[dict[str, Any]] = None,
                          **kwargs) -> SendResult:
-        return await self._sidecar_send_attachment(chat_id, video_path, caption=caption)
+        return await self._authorize_and_dispatch_attachment(
+            chat_id, video_path, caption=caption, kind="video", metadata=metadata,
+        )
 
     async def send_document(self, chat_id: str, file_path: str, caption: Optional[str] = None,
                             file_name: Optional[str] = None, reply_to: Optional[str] = None,
                             metadata: Optional[dict[str, Any]] = None, **kwargs) -> SendResult:
-        return await self._sidecar_send_attachment(chat_id, file_path, name=file_name, caption=caption)
+        return await self._authorize_and_dispatch_attachment(
+            chat_id, file_path, name=file_name, caption=caption, kind="attachment", metadata=metadata,
+        )
 
     # send_animation: base falls back to send_image (iMessage renders GIFs inline as images).
 
@@ -1583,12 +1732,153 @@ class PhotonAdapter(BasePlatformAdapter):
         """Photon's ``space.id`` is opaque; with only the id, infer conservatively."""
         return {"name": chat_id, "type": "dm", "id": chat_id}
 
+    @staticmethod
+    def extract_local_files(content: str) -> tuple[list[str], str]:
+        """Photon containment: neutralize bare-path host extraction.
+
+        Overrides BasePlatformAdapter.extract_local_files to prevent untrusted
+        model output containing bare local file paths from being automatically
+        extracted and dispatched as host attachments.
+
+        Returns:
+            Tuple of (empty_list, original_content).
+        """
+        return [], content
+
+    @staticmethod
+    def extract_media(content: str) -> tuple[list[tuple[str, bool]], str]:
+        """Photon-specific safe media extraction.
+
+        Only extracts attachments that are verified staged artifacts in AttachmentRegistry.
+        Untrusted MEDIA:<path> tags referencing arbitrary local files are neutralized
+        and retained in the message text to prevent file exfiltration while preserving
+        model prose.
+        """
+        if not content or "MEDIA:" not in content:
+            return [], content
+
+        try:
+            from gateway.attachment_registry import registry
+            from gateway.platforms.base import MEDIA_TAG_CLEANUP_RE, _normalize_media_tag_path
+
+            authorized_media: list[tuple[str, bool]] = []
+
+            for match in MEDIA_TAG_CLEANUP_RE.finditer(content):
+                raw_path = match.group("path")
+                norm_p = _normalize_media_tag_path(raw_path)
+                if not norm_p:
+                    continue
+                exp_p = os.path.expanduser(norm_p)
+                if registry.is_staged_artifact(exp_p):
+                    is_voice = "[[audio_as_voice]]" in content and os.path.splitext(exp_p)[1].lower() in (
+                        ".m4a", ".mp3", ".wav", ".aac", ".ogg"
+                    )
+                    authorized_media.append((exp_p, is_voice))
+
+            if not authorized_media:
+                return [], content
+
+            cleaned = content.replace("[[audio_as_voice]]", "").replace("[[as_document]]", "")
+            for p, _ in authorized_media:
+                cleaned = re.sub(rf"MEDIA:\s*{re.escape(p)}\b", "", cleaned)
+                cleaned = re.sub(rf"MEDIA:\s*{re.escape(os.path.basename(p))}\b", "", cleaned)
+            cleaned = re.sub(r'\n{3,}', '\n\n', cleaned).strip()
+            return authorized_media, cleaned
+        except Exception as e:
+            logger.warning("[photon] Exception during safe extract_media: %s", e)
+            return [], content
+
     def format_message(self, content: str) -> str:
-        # Strip tapback / poll / effect / calendar / map / spoiler control tags so they never leak as literal text
+        # Protect fenced code blocks (```...```) and inline code (`...`) so code examples remain literal
+        code_blocks: list[str] = []
+        mask_token = f"\x00AIRHERMES_{uuid.uuid4().hex[:12]}_"
+
+        def _save_code(m: re.Match) -> str:
+            code_blocks.append(m.group(0))
+            return f"{mask_token}{len(code_blocks)-1}\x00"
+
+        content = re.sub(r'```.*?```|`[^`\r\n]+`', _save_code, content, flags=re.DOTALL)
+
+        # Preserve text and structured fallback for semantic tags rather than silent deletion
+        # 1. Effects: preserve enclosed text; strip empty/self-closing tags
+        def _replace_effect(m: re.Match) -> str:
+            return (m.group("text") or "").strip()
+
         content = re.sub(
-            r'<(?:tapback|reaction|poll|effect|calendar|map|location|spoiler)(?:\s+[^>]*?)?>.*?</(?:tapback|reaction|poll|effect|calendar|map|location|spoiler)>|<(?:tapback|reaction|poll|effect|calendar|map|location|spoiler)\s+[^>]*?/>',
+            r'<(?:effect(?::[a-zA-Z0-9_]+)?)(?:\s+[^>]*?)?>(?P<text>.*?)</(?:effect(?::[a-zA-Z0-9_]+)?)>',
+            _replace_effect, content, flags=re.IGNORECASE | re.DOTALL,
+        )
+        content = re.sub(r'<(?:effect(?::[a-zA-Z0-9_]+)?)(?:\s+[^>]*?)?\s*/>', '', content, flags=re.IGNORECASE)
+
+        # 2. Spoilers: preserve secret text
+        content = re.sub(r'<spoiler>(?P<text>.*?)</spoiler>', r'\g<text>', content, flags=re.IGNORECASE | re.DOTALL)
+
+        # 3. Polls: readable fallback
+        def _replace_poll(m: re.Match) -> str:
+            attrs = m.group("attrs") or ""
+            body = (m.group("body") or "").strip()
+            m_title = re.search(r'title=["\']([^"\']+)["\']', attrs, re.IGNORECASE)
+            title = m_title.group(1).strip() if m_title else "投票"
+            if body:
+                return f"📊 {title}:\n{body}"
+            return f"📊 {title}"
+
+        content = re.sub(
+            r'<poll(?P<attrs>\s+[^>]*?)?(?:>(?P<body>.*?)</poll>|/\s*>)',
+            _replace_poll, content, flags=re.IGNORECASE | re.DOTALL,
+        )
+
+        # 4. Calendar: readable fallback
+        def _replace_calendar(m: re.Match) -> str:
+            attrs = m.group("attrs") or ""
+            body = (m.group("body") or "").strip()
+            m_title = re.search(r'(?:title|name|summary)=["\']([^"\']+)["\']', attrs, re.IGNORECASE)
+            title = m_title.group(1).strip() if m_title else (body.splitlines()[0] if body else "日程")
+            parts = [f"📅 日程: {title}"]
+            m_start = re.search(r'(?:start|time|date)=["\']([^"\']+)["\']', attrs, re.IGNORECASE)
+            if m_start:
+                parts.append(f"时间: {m_start.group(1)}")
+            m_loc = re.search(r'(?:location|loc|place|address)=["\']([^"\']+)["\']', attrs, re.IGNORECASE)
+            if m_loc:
+                parts.append(f"地点: {m_loc.group(1)}")
+            if body and body != title:
+                parts.append(body)
+            return "\n".join(parts)
+
+        content = re.sub(
+            r'<(?:calendar|calendar_event|event|schedule)(?P<attrs>\s+[^>]*?)?(?:>(?P<body>.*?)</(?:calendar|calendar_event|event|schedule)>|/\s*>)',
+            _replace_calendar, content, flags=re.IGNORECASE | re.DOTALL,
+        )
+
+        # 5. Map: readable fallback
+        def _replace_map(m: re.Match) -> str:
+            attrs = m.group("attrs") or ""
+            body = (m.group("body") or "").strip()
+            m_name = re.search(r'(?:name|title|query|q)=["\']([^"\']+)["\']', attrs, re.IGNORECASE)
+            name = m_name.group(1).strip() if m_name else (body.splitlines()[0] if body else "地图定位")
+            parts = [f"📍 地图: {name}"]
+            m_coord = re.search(r'(?:coordinate|coords|coord|ll)=["\']([^"\']+)["\']', attrs, re.IGNORECASE)
+            if m_coord:
+                parts.append(f"坐标: {m_coord.group(1)}")
+            if body and body != name:
+                parts.append(body)
+            return "\n".join(parts)
+
+        content = re.sub(
+            r'<(?:map|location)(?P<attrs>\s+[^>]*?)?(?:>(?P<body>.*?)</(?:map|location)>|/\s*>)',
+            _replace_map, content, flags=re.IGNORECASE | re.DOTALL,
+        )
+
+        # 6. Tapbacks: pure reaction tags with no user-facing text removed safely
+        content = re.sub(
+            r'<(?:tapback|reaction)(?:\s+[^>]*?)?>.*?</(?:tapback|reaction)>|<(?:tapback|reaction)\s+[^>]*?/>',
             '', content, flags=re.IGNORECASE | re.DOTALL,
         )
+
+        # Restore protected code blocks verbatim
+        for i, block in enumerate(code_blocks):
+            content = content.replace(f"{mask_token}{i}\x00", block)
+
         # Markdown passes through verbatim (sidecar markdown() builder); PHOTON_MARKDOWN=false strips.
         return content if _markdown_enabled() else strip_markdown(content, keep_link_targets=True)
 

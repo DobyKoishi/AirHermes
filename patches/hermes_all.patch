@@ -767,19 +767,19 @@ index 00000000..bc14e389
 +            f"DTSTAMP:{now_ics}\r\n"
 +            f"DTSTART:{start_ics}\r\n"
 +            f"DTEND:{end_ics}\r\n"
-+            f"SUMMARY;CHARSET=UTF-8:{escape_ics(clean_title)}\r\n"
++            f"SUMMARY:{escape_ics(clean_title)}\r\n"
 +        )
 +        if description:
-+            ics_content += f"DESCRIPTION;CHARSET=UTF-8:{escape_ics(description.strip())}\r\n"
++            ics_content += f"DESCRIPTION:{escape_ics(description.strip())}\r\n"
 +        if location:
-+            ics_content += f"LOCATION;CHARSET=UTF-8:{escape_ics(location.strip())}\r\n"
++            ics_content += f"LOCATION:{escape_ics(location.strip())}\r\n"
 +
 +        ics_content += (
 +            "STATUS:CONFIRMED\r\n"
 +            "BEGIN:VALARM\r\n"
 +            "TRIGGER:-PT15M\r\n"
 +            "ACTION:DISPLAY\r\n"
-+            f"DESCRIPTION;CHARSET=UTF-8:提醒: {escape_ics(clean_title)}\r\n"
++            f"DESCRIPTION:提醒: {escape_ics(clean_title)}\r\n"
 +            "END:VALARM\r\n"
 +            "END:VEVENT\r\n"
 +            "END:VCALENDAR\r\n"
@@ -4702,9 +4702,9 @@ index 00000000..cb13c25c
 +            content = fp.read()
 +
 +        self.assertIn("BEGIN:VCALENDAR", content)
-+        self.assertIn("SUMMARY;CHARSET=UTF-8:Q4复盘会", content)
++        self.assertIn("SUMMARY:Q4复盘会", content)
 +        self.assertIn("DTSTART:20261106T140000", content)
-+        self.assertIn("LOCATION;CHARSET=UTF-8:腾讯会议", content)
++        self.assertIn("LOCATION:腾讯会议", content)
 +
 +    def test_bubble_parser_map_extraction(self):
 +        p = BubbleParser()

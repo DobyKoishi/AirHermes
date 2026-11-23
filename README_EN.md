@@ -5,9 +5,13 @@
 
 <p align="left">
   <a href="https://github.com/DobyKoishi/AirHermes/releases"><img src="https://img.shields.io/badge/Release-v1.0.0--rc.2-blue?style=flat-square" alt="Release" /></a>
+  <a href="#"><img src="https://img.shields.io/badge/Status-Early%20Preview-f59e0b?style=flat-square" alt="Status: Early Preview" /></a>
   <a href="#"><img src="https://img.shields.io/badge/Python-3.11%20%7C%203.12-3776AB?style=flat-square" alt="Python Version" /></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/License-MIT-green?style=flat-square" alt="License" /></a>
 </p>
+
+> **Development Status: Early Preview**  
+> AirHermes is still in early development and testing. Some features may be incomplete, and breaking changes may occur as the project evolves. Feedback, bug reports, and suggestions are always welcome.
 
 <p align="center">
   <img src="assets/airhermes-hero.gif" alt="AirHermes Discrete Multi-Bubble Streaming Motion" width="100%" />

@@ -5,9 +5,13 @@
 
 <p align="left">
   <a href="https://github.com/DobyKoishi/AirHermes/releases"><img src="https://img.shields.io/badge/Release-v1.0.0--rc.2-blue?style=flat-square" alt="Release" /></a>
+  <a href="#"><img src="https://img.shields.io/badge/Status-Early%20Preview-f59e0b?style=flat-square" alt="Status: Early Preview" /></a>
   <a href="#"><img src="https://img.shields.io/badge/Python-3.11%20%7C%203.12-3776AB?style=flat-square" alt="Python Version" /></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/License-MIT-green?style=flat-square" alt="License" /></a>
 </p>
+
+> **开发状态：早期预览**  
+> AirHermes 目前仍处于早期开发与测试阶段。部分功能可能尚不完善，后续更新也可能带来不兼容的变更。欢迎试用、反馈问题与提出建议。
 
 <p align="center">
   <img src="assets/airhermes-hero.gif" alt="AirHermes 离散多气泡流式传输交互演示" width="100%" />
